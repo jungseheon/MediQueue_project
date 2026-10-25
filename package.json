@@ -1,0 +1,31 @@
+{
+  "name": "mediqueue_project",
+  "version": "1.0.0",
+  "description": "숭실대 오픈소스기반기초설계 7조",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "postinstall": "prisma skills sync || exit 0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jungseheon/MediQueue_project.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/jungseheon/MediQueue_project/issues"
+  },
+  "homepage": "https://github.com/jungseheon/MediQueue_project#readme",
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.5",
+    "nodemon": "^3.1.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^7.0.2",
+    "prisma": "8.0.0-rc.27"
+  }
+}
