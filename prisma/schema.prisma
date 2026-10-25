@@ -1,0 +1,85 @@
+// ==========================================
+// 1. DB 연결 설정
+// ==========================================
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 2. Prisma Client 생성기
+// ==========================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================================
+// 3. 데이터 모델 정의 (Models)
+// ==========================================
+
+// 의사 및 진료실 모델
+model Doctor {
+  id              Int              @id @default(autoincrement())
+  name            String           // 의사 이름 (예: 김○○)
+  department      String           // 진료과 (예: 정신과 2진료실)
+  createdAt       DateTime         @default(now())
+  
+  algorithmConfig AlgorithmConfig? // 진료실별 예측 알고리즘 설정 (1:1)
+  tickets         QueueTicket[]    // 당일 대기표 목록
+}
+
+// 환자 모델
+model Patient {
+  id        Int           @id @default(autoincrement())
+  name      String        // 환자 이름
+  gender    String?       // 성별
+  age       Int?          // 나이
+  phone     String?       // 연락처
+  createdAt DateTime      @default(now())
+
+  tickets   QueueTicket[]
+}
+
+// 당일 대기열 / 대기표 모델 (대시보드 핵심)
+model QueueTicket {
+  id                    Int          @id @default(autoincrement())
+  ticketNumber          String       // 접수번호 (예: A-031)
+  doctorId              Int          
+  patientId             Int         
+  sequenceNumber        Int          // 대기 순번
+  isFirstVisit          Boolean      @default(false) // 초진 여부
+  status                TicketStatus @default(WAITING)
+  
+  reservationTime       String?      // 예약 시간 (예: "14:00")
+  estimatedStartTime    String?      // 예상 시작 시간 (예: "14:06")
+  actualStartTime       DateTime?    // 실제 진료 시작 시각
+  actualEndTime         DateTime?    // 실제 진료 완료 시각
+  actualDurationMinutes Int?         // 실제 소요된 진료시간(분)
+  
+  createdAt             DateTime     @default(now())
+
+  doctor                Doctor       @relation(fields: [doctorId], references: [id])
+  patient               Patient      @relation(fields: [patientId], references: [id])
+}
+
+// 예측 알고리즘 설정 모델
+model AlgorithmConfig {
+  id             Int      @id @default(autoincrement())
+  doctorId       Int      @unique
+  firstVisitTime Float    @default(12.0) // 초진 기본시간 (분)
+  reVisitTime    Float    @default(8.0)  // 재진 기본시간 (분)
+  alpha          Float    @default(0.3)  // EWMA 보정 비율 α
+  delayThreshold Int      @default(10)   // 지연 알림 기준 (분)
+  updatedAt      DateTime @updatedAt
+
+  doctor         Doctor   @relation(fields: [doctorId], references: [id])
+}
+
+enum TicketStatus {
+  WAITING           // 대기 중
+  IN_CONSULTATION   // 진료 중
+  COMPLETED         // 진료 완료
+  CANCELLED         // 취소/부재
+}
