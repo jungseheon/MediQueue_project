@@ -1,7 +1,6 @@
 // ==========================================
 // 1. DB 연결 설정
 // ==========================================
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -10,7 +9,6 @@ datasource db {
 // ==========================================
 // 2. Prisma Client 생성기
 // ==========================================
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -21,65 +19,90 @@ generator client {
 
 // 의사 및 진료실 모델
 model Doctor {
-  id              Int              @id @default(autoincrement())
-  name            String           // 의사 이름 (예: 김○○)
-  department      String           // 진료과 (예: 정신과 2진료실)
-  createdAt       DateTime         @default(now())
-  
-  algorithmConfig AlgorithmConfig? // 진료실별 예측 알고리즘 설정 (1:1)
-  tickets         QueueTicket[]    // 당일 대기표 목록
+  id          BigInt   @id @default(autoincrement()) 
+  displayName String   @map("display_name") // 의사 이름?
+  department  String //진료과 (예: 정신과 2진료실)
+
+  // 관계 설정
+  appointments     Appointment[]
+  serviceTimeStats ServiceTimeStat[]
+
+  @@map("doctors")
 }
 
 // 환자 모델
 model Patient {
-  id        Int           @id @default(autoincrement())
-  name      String        // 환자 이름
-  gender    String?       // 성별
-  age       Int?          // 나이
-  phone     String?       // 연락처
-  createdAt DateTime      @default(now())
+  id          BigInt   @id @default(autoincrement())
+  displayName String   @map("display_name") // 환자 이름
 
-  tickets   QueueTicket[]
+  // 관계 설정
+  appointments Appointment[]
+
+  @@map("patients")
 }
 
-// 당일 대기열 / 대기표 모델 (대시보드 핵심)
-model QueueTicket {
-  id                    Int          @id @default(autoincrement())
-  ticketNumber          String       // 접수번호 (예: A-031)
-  doctorId              Int          
-  patientId             Int         
-  sequenceNumber        Int          // 대기 순번
-  isFirstVisit          Boolean      @default(false) // 초진 여부
-  status                TicketStatus @default(WAITING)
-  
-  reservationTime       String?      // 예약 시간 (예: "14:00")
-  estimatedStartTime    String?      // 예상 시작 시간 (예: "14:06")
-  actualStartTime       DateTime?    // 실제 진료 시작 시각
-  actualEndTime         DateTime?    // 실제 진료 완료 시각
-  actualDurationMinutes Int?         // 실제 소요된 진료시간(분)
-  
-  createdAt             DateTime     @default(now())
 
-  doctor                Doctor       @relation(fields: [doctorId], references: [id])
-  patient               Patient      @relation(fields: [patientId], references: [id])
+// 예약 및 대기열 모델
+model Appointment {
+  id          BigInt            @id @default(autoincrement()) //예약 번호
+  doctorId    BigInt            @map("doctor_id")
+  patientId   BigInt            @map("patient_id")
+  scheduledAt DateTime          @map("scheduled_at") @db.Timestamptz //예약 일시
+  status      AppointmentStatus @default(BOOKED) //예약 상태
+
+  // 관계 설정
+  doctor     Doctor      @relation(fields: [doctorId], references: [id])
+  patient    Patient     @relation(fields: [patientId], references: [id])
+  queueEntry QueueEntry?
+
+  @@map("appointments")
 }
 
-// 예측 알고리즘 설정 모델
-model AlgorithmConfig {
-  id             Int      @id @default(autoincrement())
-  doctorId       Int      @unique
-  firstVisitTime Float    @default(12.0) // 초진 기본시간 (분)
-  reVisitTime    Float    @default(8.0)  // 재진 기본시간 (분)
-  alpha          Float    @default(0.3)  // EWMA 보정 비율 α
-  delayThreshold Int      @default(10)   // 지연 알림 기준 (분)
-  updatedAt      DateTime @updatedAt
+// 예약 및 대기열 모델 (Cont.)
+model QueueEntry {
+  id            BigInt      @id @default(autoincrement())
+  appointmentId BigInt      @unique @map("appointment_id") //1대1 유일성 제약(하나의 예약 건당 단 하나의 대기표)
+  queuePosition Int         @map("queue_position") //현재 대기실에서의 순번
+  status        QueueStatus
+  checkedInAt   DateTime?   @map("checked_in_at") @db.Timestamptz //현장 도착 접수 시각
+  startedAt     DateTime?   @map("started_at") @db.Timestamptz //진료실 입장/진료 시작 시각
+  completedAt   DateTime?   @map("completed_at") @db.Timestamptz //진료 완료 시각
 
-  doctor         Doctor   @relation(fields: [doctorId], references: [id])
+  // 관계 설정 (예약 1:1 관계)
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+
+  @@map("queue_entries")
 }
 
-enum TicketStatus {
-  WAITING           // 대기 중
-  IN_CONSULTATION   // 진료 중
-  COMPLETED         // 진료 완료
-  CANCELLED         // 취소/부재
+// EWMA 대기시간 통계 모델
+model ServiceTimeStat {
+  doctorId    BigInt   @map("doctor_id")
+  serviceType String   @map("service_type")
+  ewmaMinutes Decimal  @map("ewma_minutes") @db.Decimal(6, 2) //예측 진료시간(소수점 2자리, 고정밀도.)
+  sampleCount Int      @default(0) @map("sample_count") //누적 진료 환자 수
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz //최종 갱신 시각
+
+  // 관계 설정
+  doctor Doctor @relation(fields: [doctorId], references: [id])
+
+  // 복합 기본키 (doctor_id + service_type)
+  @@id([doctorId, serviceType])
+  @@map("service_time_stats")
+}
+
+
+// Enum (상태 정의)
+enum AppointmentStatus {
+  BOOKED    @map("booked") //예약 확정
+  CANCELLED @map("cancelled") //예약 취소
+}
+
+enum QueueStatus {
+  BOOKED        @map("booked") //예약 등록 (미도착)
+  CHECKED_IN    @map("checked_in") //현장 접수 환료 (대기 중)
+  CALLED        @map("called") //진료실 호출
+  IN_PROGRESS   @map("in_progress") //진료 중
+  COMPLETED     @map("completed") //진료 완료
+  NO_SHOW       @map("no_show") //부재/노쇼 처리
+  CANCELLED     @map("cancelled") //당일 접수 취소
 }
