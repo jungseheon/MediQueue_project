@@ -26,3 +26,26 @@
 
 5. GitHub 웹페이지 접속하여 main 브랜치로 Pull Request (PR) 작성
    -> 팀장/팀원 리뷰 후 Merge 진행
+
+## 예약 API 서버
+
+`.env`에 PostgreSQL 접속 문자열을 `DATABASE_URL`로 설정한 뒤 DB를 실행하고 스키마를 반영합니다.
+
+```sh
+npm install
+docker compose up -d db
+npm run db:push
+npm run dev
+```
+
+서버 기본 주소는 `http://localhost:3000`이며, 예약 API는 `/api/appointments`에서 제공합니다.
+
+| Method | Path | 설명 |
+| --- | --- | --- |
+| GET | `/api/appointments` | 예약 목록 (의사, 환자, 상태 필터 지원) |
+| GET | `/api/appointments/:id` | 예약 상세 |
+| POST | `/api/appointments` | 예약 생성 |
+| PATCH | `/api/appointments/:id` | 예약 일시, 의사, 환자, 상태 수정 |
+| DELETE | `/api/appointments/:id` | 예약 취소 |
+
+예약 생성 본문 예시: `{"doctorId":"1","patientId":"1","scheduledAt":"2026-10-28T09:00:00+09:00"}`. ID는 문자열 또는 안전한 정수로 전달하며, 응답에서는 문자열로 반환합니다.
