@@ -1,3 +1,18 @@
+/*
+ * API 사용법 (기본 주소: http://localhost:3000)
+ * GET    /health                                                서버와 DB 상태 확인 (DB 연결 실패 시 503)
+ * GET    /api/appointments?doctorId=1&patientId=2&status=booked  예약 목록 조회 (필터 선택)
+ * GET    /api/appointments/:id                                  예약 상세 조회
+ * POST   /api/appointments                                      예약 생성
+ *        JSON: { "doctorId": "1", "patientId": "2", "scheduledAt": "2026-11-01T09:00:00Z" }
+ * PATCH  /api/appointments/:id                                  예약 정보 수정
+ *        JSON: { "scheduledAt": "2026-11-01T10:00:00Z" } (doctorId, patientId, status도 수정 가능)
+ * DELETE /api/appointments/:id                                  예약 취소 (삭제하지 않고 상태 변경)
+ * GET    /api/doctors/:doctorId/queue                           의사 대기열 및 예상 시작·대기시간 조회
+ *        응답: { data: { doctor, generatedAt, queue: [...] } }; 대기 항목은 checked_in/called 상태
+ * 모든 응답은 JSON
+ * 예약 생성에는 201, 잘못된 입력에는 400, 없는 자료에는 404 반환
+ */
 import "dotenv/config";
 import cors from "cors";
 import express, { type ErrorRequestHandler } from "express";
@@ -9,12 +24,85 @@ import {
   type QueueEntry,
 } from "@prisma/client";
 import { prisma } from "./prisma";
+import { calculateQueueWaitTimes } from "./services/calculator";
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
 
 app.use(cors());
 app.use(express.json());
+
+app.get("/health", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.status(200).json({ status: "ok", database: "ok" });
+  } catch {
+    res.status(503).json({ status: "error", database: "unavailable" });
+  }
+});
+
+app.get("/api/doctors/:doctorId/queue", async (req, res) => {
+  const doctorId = parseId(req.params.doctorId, "doctorId");
+  const [doctor, queueEntries, inProgress] = await Promise.all([
+    prisma.doctor.findUnique({
+      where: { id: doctorId },
+      include: { serviceTimeStats: { where: { serviceType: "general" } } },
+    }),
+    prisma.queueEntry.findMany({
+      where: {
+        status: { in: ["CHECKED_IN", "CALLED"] },
+        appointment: { doctorId },
+      },
+      include: { appointment: true },
+      orderBy: [{ queuePosition: "asc" }, { checkedInAt: "asc" }],
+    }),
+    prisma.queueEntry.findFirst({
+      where: { status: "IN_PROGRESS", appointment: { doctorId } },
+      orderBy: { startedAt: "desc" },
+    }),
+  ]);
+
+  if (!doctor) throw new ApiError(404, "Doctor not found");
+
+  const now = new Date();
+  const ewmaMinutes = Number(doctor.serviceTimeStats[0]?.ewmaMinutes ?? 10);
+  const previousFinish = inProgress?.startedAt
+    ? new Date(Math.max(now.getTime(), inProgress.startedAt.getTime() + ewmaMinutes * 60_000))
+    : now;
+  const estimates = calculateQueueWaitTimes(
+    queueEntries.map((entry, index) => ({
+      ticketId: index,
+      appointmentTime: entry.appointment.scheduledAt,
+      isFirstVisit: false,
+    })),
+    ewmaMinutes,
+    previousFinish,
+  );
+
+  res.json({
+    data: {
+      doctor: {
+        id: doctor.id.toString(),
+        displayName: doctor.displayName,
+        department: doctor.department,
+      },
+      generatedAt: now,
+      queue: queueEntries.map((entry, index) => ({
+        id: entry.id.toString(),
+        appointmentId: entry.appointmentId.toString(),
+        queuePosition: entry.queuePosition,
+        status: entry.status.toLowerCase(),
+        scheduledAt: entry.appointment.scheduledAt,
+        estimatedStartTime: estimates[index].estimatedStartTime,
+        estimatedWaitMinutes: Math.max(
+          0,
+          Math.ceil((estimates[index].estimatedStartTime.getTime() - now.getTime()) / 60_000),
+        ),
+        delayMinutes: estimates[index].delayMinutes,
+      })),
+    },
+  });
+});
 
 class ApiError extends Error {
   constructor(
