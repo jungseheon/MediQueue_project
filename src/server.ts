@@ -1,18 +1,3 @@
-/*
- * API 사용법 (기본 주소: http://localhost:3000)
- * GET    /health                                                서버와 DB 상태 확인 (DB 연결 실패 시 503)
- * GET    /api/appointments?doctorId=1&patientId=2&status=booked  예약 목록 조회 (필터 선택)
- * GET    /api/appointments/:id                                  예약 상세 조회
- * POST   /api/appointments                                      예약 생성
- *        JSON: { "doctorId": "1", "patientId": "2", "scheduledAt": "2026-11-01T09:00:00Z" }
- * PATCH  /api/appointments/:id                                  예약 정보 수정
- *        JSON: { "scheduledAt": "2026-11-01T10:00:00Z" } (doctorId, patientId, status도 수정 가능)
- * DELETE /api/appointments/:id                                  예약 취소 (삭제하지 않고 상태 변경)
- * GET    /api/doctors/:doctorId/queue                           의사 대기열 및 예상 시작·대기시간 조회
- *        응답: { data: { doctor, generatedAt, queue: [...] } }; 대기 항목은 checked_in/called 상태
- * 모든 응답은 JSON
- * 예약 생성에는 201, 잘못된 입력에는 400, 없는 자료에는 404 반환
- */
 import "dotenv/config";
 import cors from "cors";
 import express, { type ErrorRequestHandler } from "express";
