@@ -1,4 +1,8 @@
---
+-- DUMP 파일 생성 시
+-- docker exec mediqueue-db pg_dump -U mediqueue -d mediqueue -F p > dump.sql
+-- DUMP 파일 복원 시
+-- docker exec -i mediqueue-db psql -U mediqueue -d mediqueue < dump.sql
+
 -- PostgreSQL database dump
 --
 

@@ -9,12 +9,85 @@ import {
   type QueueEntry,
 } from "@prisma/client";
 import { prisma } from "./prisma";
+import { calculateQueueWaitTimes } from "./services/calculator";
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
 
 app.use(cors());
 app.use(express.json());
+
+app.get("/health", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.status(200).json({ status: "ok", database: "ok" });
+  } catch {
+    res.status(503).json({ status: "error", database: "unavailable" });
+  }
+});
+
+app.get("/api/doctors/:doctorId/queue", async (req, res) => {
+  const doctorId = parseId(req.params.doctorId, "doctorId");
+  const [doctor, queueEntries, inProgress] = await Promise.all([
+    prisma.doctor.findUnique({
+      where: { id: doctorId },
+      include: { serviceTimeStats: { where: { serviceType: "general" } } },
+    }),
+    prisma.queueEntry.findMany({
+      where: {
+        status: { in: ["CHECKED_IN", "CALLED"] },
+        appointment: { doctorId },
+      },
+      include: { appointment: true },
+      orderBy: [{ queuePosition: "asc" }, { checkedInAt: "asc" }],
+    }),
+    prisma.queueEntry.findFirst({
+      where: { status: "IN_PROGRESS", appointment: { doctorId } },
+      orderBy: { startedAt: "desc" },
+    }),
+  ]);
+
+  if (!doctor) throw new ApiError(404, "Doctor not found");
+
+  const now = new Date();
+  const ewmaMinutes = Number(doctor.serviceTimeStats[0]?.ewmaMinutes ?? 10);
+  const previousFinish = inProgress?.startedAt
+    ? new Date(Math.max(now.getTime(), inProgress.startedAt.getTime() + ewmaMinutes * 60_000))
+    : now;
+  const estimates = calculateQueueWaitTimes(
+    queueEntries.map((entry, index) => ({
+      ticketId: index,
+      appointmentTime: entry.appointment.scheduledAt,
+      isFirstVisit: false,
+    })),
+    ewmaMinutes,
+    previousFinish,
+  );
+
+  res.json({
+    data: {
+      doctor: {
+        id: doctor.id.toString(),
+        displayName: doctor.displayName,
+        department: doctor.department,
+      },
+      generatedAt: now,
+      queue: queueEntries.map((entry, index) => ({
+        id: entry.id.toString(),
+        appointmentId: entry.appointmentId.toString(),
+        queuePosition: entry.queuePosition,
+        status: entry.status.toLowerCase(),
+        scheduledAt: entry.appointment.scheduledAt,
+        estimatedStartTime: estimates[index].estimatedStartTime,
+        estimatedWaitMinutes: Math.max(
+          0,
+          Math.ceil((estimates[index].estimatedStartTime.getTime() - now.getTime()) / 60_000),
+        ),
+        delayMinutes: estimates[index].delayMinutes,
+      })),
+    },
+  });
+});
 
 class ApiError extends Error {
   constructor(
