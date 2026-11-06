@@ -1,45 +1,106 @@
 # MediQueue_Project
-숭실대 오픈소스기반기초설계 7조
+실시간 예상 대기 시간 안내 기반 병원 예약 관리 시스템
 
-팀원:
-정세헌(jungseheon) 
-임지수(jisuyim) 
-양윤서(yunseo4002) 
-김태연(taetaeris)
+## 주요 기능
+- EWMA(지수 가중 이동 평균) 방식에 따른 진료 소요 시간에 대한 동적 보정한 대기 시간 제공
+- 실제 진료 진행 상태 반영한 대기 시간 제공
+- 개인별 진료 지연 반영한 대기시간 제공
+- 실시간 알림 제공
 
+> 숭실대 오픈소스기반기초설계 7조
+> **팀원**
+> 정세헌(jungseheon)
+> 임지수(jisuyim)
+> 양윤서(yunseo4002)
+> 김태연(taetaeris)
 
+## 기술 스택
+- 런타임·언어: Node.js, TypeScript
+- 프론트엔드: 
+- 백엔드: Express 5 기반 REST API
+- 데이터베이스: PostgreSQL
+- ORM·DB 연결: Prisma 7, @prisma/adapter-pg, pg
+- 개발·빌드: tsx (개발 서버 실행), tsc (빌드)
+- 기타: dotenv (환경변수 관리), cors (CORS 처리)
+
+## 실행 방법
+### 1. 환경 변수 설정
+'.env' 파일 생성 후 다음 값을 설정(아래 값은 로컬 개발용 예시)
+~~~env
+POSTGRES_DB=mediqueue
+POSTGRES_USER=mediqueue
+POSTGRES_PASSWORD=Local_PASSWORD
+
+DATABASE_URL="postgresql://mediqueue:Local_PASSWORD@localhost:5432/mediqueue?schema=public"
+~~~
+.env 파일에는 비밀번호가 포홤되므로 Git에 커밋하지 않는다.
+
+### 2. 의존성 설치 및 데이터베이스 실행
+~~~sh
+npm install
+docker compose up -d db
+~~~
+
+### 3. 데이터베이스 스키마 반영
+~~~sh
+npm run db:push
+~~~
+
+### 4. 개발 서버 실행
+~~~sh
+npm run dev
+~~~
+서버는 기본적으로 http://localhost:3000 에서 실행된다.
+
+#### DB연결 확인
+~~~sh
+curl http://localhost:3000/health
+~~~
+
+### 5. 종료
+- 개발 서버 종료: 실행 중인 터미널에서 'Ctrl+C'
+- PostgreSQL 컨테이너:
+~~~sh
+docker compose stop db
+~~~
+
+### 6. 프로젝트 빌드 및 실행
+~~~sh
+npm run build
+npm start
+~~~
+cf. 현재 'npm test'는 테스트 러너가 설정되어있지 않아 "테스트 미지정 오류" 발생한다.
+
+## GitHUB 협업 규칙
 모든 작업은 main 브랜치에 직접 푸시하지 않고, 기능별 브랜치를 파서 Pull Request(PR)로 진행
 
 1. 최신 main 코드 받기
-   git checkout main
-   git pull origin main
+~~~
+git checkout main
+git pull origin main
+~~~
 
 2. 새로운 기능 브랜치 생성 및 이동
-   git checkout -b feat/기능이름 (예: feat/login, feat/dashboard)
+~~~
+git checkout -b feat/기능이름 (예: feat/login, feat/dashboard)
+~~~
 
 3. 코드 작업 후 커밋
-   git add .
-   git commit -m "feat: 구현한 기능 설명"
+~~~
+git add .
+git commit -m "feat: 구현한 기능 설명"
+~~~
 
 4. 본인의 기능 브랜치로 푸시
-   git push origin feat/기능이름
+~~~
+git push origin feat/기능이름
+~~~
 
 5. GitHub 웹페이지 접속하여 main 브랜치로 Pull Request (PR) 작성
-   -> 팀장/팀원 리뷰 후 Merge 진행
+   -> 본인 제외 1인 리뷰 후 Merge 진행
 
-## 예약 API 서버
 
-`.env`에 PostgreSQL 접속 문자열을 `DATABASE_URL`로 설정한 뒤 DB를 실행하고 스키마를 반영합니다.
-
-```sh
-npm install
-docker compose up -d db
-npm run db:push
-npm run dev
-```
-
-서버 기본 주소는 `http://localhost:3000`입니다. API 요청과 사용 예시는 아래를 참고하세요.
-
+## API
 | Method | Path | 설명 |
 | --- | --- | --- |
 | GET | `/health` | 서버와 DB 연결 상태 확인. 성공 시 `200`, DB 연결 실패 시 `503` |
