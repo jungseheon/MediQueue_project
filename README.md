@@ -106,6 +106,7 @@ git push origin feat/기능이름
 | PATCH | `/api/appointments/:id` | 예약 일시, 의사, 환자, 상태 수정. 변경할 필드만 전달 |
 | DELETE | `/api/appointments/:id` | 예약 취소. 행을 삭제하지 않고 상태를 `cancelled`로 변경 |
 | GET | `/api/doctors/:doctorId/queue` | 의사 대기열과 예상 시작 시각·대기시간 조회 |
+| PATCH | `/api/queue-entries/:id/status` | 대기열 항목 상태 변경 (`in_progress`, `completed` 등). 완료 시 EWMA 및 대기시간 자동 재계산 |
 
 ### 요청 예시
 
@@ -142,6 +143,20 @@ curl -i -X DELETE http://localhost:3000/api/appointments/예약ID
 
 ```sh
 curl -i http://localhost:3000/api/doctors/의사ID/queue
+```
+
+대기열 상태 변경 (진료 시작 / 진료 완료):
+
+```sh
+# 진료 시작 (IN_PROGRESS)
+curl -i -X PATCH http://localhost:3000/api/queue-entries/대기표ID/status \
+  -H 'Content-Type: application/json' \
+  --data '{"status":"in_progress"}'
+
+# 진료 완료 (COMPLETED -> 실제 소요시간 계산 후 EWMA 및 대기시간 자동 갱신)
+curl -i -X PATCH http://localhost:3000/api/queue-entries/대기표ID/status \
+  -H 'Content-Type: application/json' \
+  --data '{"status":"completed"}'
 ```
 
 대기열 응답은 `checked_in`·`called` 상태 항목만 포함하며, 각 항목에 `estimatedStartTime`, `estimatedWaitMinutes`, `delayMinutes`를 반환합니다. EWMA 통계가 없으면 예측 진료시간에 10분을 사용합니다.

@@ -26,11 +26,13 @@ export function calculateQueueWaitTimes(
     currentEWMA: number,
     lastcompletionTime: Date, // 직전 환자 완료 시각 (C_(i-1))
     delayThreshold: number = 10, // 지연 알림 기준
-    firstVisitTime: number = 12, // 초진 기본시간
-    reVisitTime: number = 8, // 재진 기본시간 
-    prepTime: number = 1 // 환자 교체 준비시간
+    firstVisitTime: number = 12, // 초진 기본시간 (분)
+    reVisitTime: number = 8, // 재진 기본시간 (분)
+    prepTime: number = 1 // 환자 교체 준비시간 (분)
 ): CalculatedResult[] {
     let prevCompletionTime = new Date(lastcompletionTime);
+    // 기준 평균 진료시간 (초진과 재진의 기본 평균값, 기본 10분)
+    const standardAvgTime = (firstVisitTime + reVisitTime) / 2;
 
     return waitingList.map((patient) => {
         const appointmentTime = new Date(patient.appointmentTime); // 원래 예약 시각
@@ -38,15 +40,17 @@ export function calculateQueueWaitTimes(
         // S_i = max(A_i, C_(i-1))
         const estimatedStartTime = new Date(
             Math.max(appointmentTime.getTime(), prevCompletionTime.getTime())
-        ); 
+        );
 
         // D_i = max(0, S_i - A_i)
         const diffMs = estimatedStartTime.getTime() - appointmentTime.getTime();
         const delayMinutes = Math.max(0, Math.floor(diffMs / (1000 * 60))); // 분 단위 변환
 
-        // 현재 환자 예상 소요시간 계산
+        // 현재 환자 예상 소요시간:
+        // 의사의 현재 진료 속도 계수(currentEWMA / standardAvgTime)를 환자의 기본 시간(초진/재진)에 반영
         const baseTime = patient.isFirstVisit ? firstVisitTime : reVisitTime;
-        const estimatedDuration = (currentEWMA / baseTime) * baseTime + prepTime;
+        const speedRatio = standardAvgTime > 0 ? currentEWMA / standardAvgTime : 1;
+        const estimatedDuration = speedRatio * baseTime + prepTime;
 
         prevCompletionTime = new Date(estimatedStartTime.getTime() + estimatedDuration * 60 * 1000); // 다음 환자를 위한 C_i 갱신
 
