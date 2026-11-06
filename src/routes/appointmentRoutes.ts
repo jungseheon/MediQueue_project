@@ -175,5 +175,112 @@ router.delete("/:id", async (req, res) => {
   res.json({ data: serializeAppointment(appointment) });
 });
 
+// POST /api/appointments/:id/check-in
+router.post("/:id/check-in", async (req, res) => {
+  const id = parseId(req.params.id, "id");
+  const now = new Date();
+
+  const result = await prisma.$transaction(async (tx) => {
+    // 1. 예약 정보 확인
+    const appointment = await tx.appointment.findUnique({
+      where: { id },
+      include: {
+        doctor: true,
+        patient: true,
+        queueEntry: true,
+      },
+    });
+
+    if (!appointment) {
+      throw new ApiError(404, "Appointment not found");
+    }
+
+    if (appointment.status === "CANCELLED") {
+      throw new ApiError(409, "Cannot check in a cancelled appointment");
+    }
+
+    // 이미 체크인 진행 중이거나 완료된 경우 중복 체크인 방지
+    if (appointment.queueEntry) {
+      const activeStatuses: QueueStatus[] = ["CHECKED_IN", "CALLED", "IN_PROGRESS", "COMPLETED"];
+      if (activeStatuses.includes(appointment.queueEntry.status)) {
+        throw new ApiError(409, "Appointment is already checked in");
+      }
+      if (appointment.queueEntry.status === "CANCELLED" || appointment.queueEntry.status === "NO_SHOW") {
+        throw new ApiError(
+          409,
+          `Cannot check in an appointment with status '${appointment.queueEntry.status.toLowerCase()}'`,
+        );
+      }
+    }
+
+    // 2. 당일 해당 의사의 최대 queuePosition 조회 후 +1 순번 부여 (1부터 시작)
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    const maxEntry = await tx.queueEntry.findFirst({
+      where: {
+        appointment: { doctorId: appointment.doctorId },
+        checkedInAt: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+      },
+      orderBy: { queuePosition: "desc" },
+    });
+
+    const nextPosition = (maxEntry?.queuePosition ?? 0) + 1;
+
+    // 3. QueueEntry 생성 또는 업데이트 (BOOKED 상태 엔트리가 있으면 갱신, 없으면 생성)
+    let queueEntry: QueueEntry;
+    if (appointment.queueEntry) {
+      queueEntry = await tx.queueEntry.update({
+        where: { appointmentId: id },
+        data: {
+          queuePosition: nextPosition,
+          status: "CHECKED_IN",
+          checkedInAt: now,
+        },
+      });
+    } else {
+      queueEntry = await tx.queueEntry.create({
+        data: {
+          appointmentId: id,
+          queuePosition: nextPosition,
+          status: "CHECKED_IN",
+          checkedInAt: now,
+        },
+      });
+    }
+
+    return {
+      queueEntry: {
+        id: queueEntry.id.toString(),
+        appointmentId: queueEntry.appointmentId.toString(),
+        queuePosition: queueEntry.queuePosition,
+        status: queueEntry.status.toLowerCase(),
+        checkedInAt: queueEntry.checkedInAt,
+      },
+      appointment: {
+        id: appointment.id.toString(),
+        doctorId: appointment.doctorId.toString(),
+        patientId: appointment.patientId.toString(),
+        scheduledAt: appointment.scheduledAt,
+        status: appointment.status.toLowerCase(),
+        doctor: {
+          id: appointment.doctor.id.toString(),
+          displayName: appointment.doctor.displayName,
+          department: appointment.doctor.department,
+        },
+        patient: {
+          id: appointment.patient.id.toString(),
+          displayName: appointment.patient.displayName,
+        },
+      },
+    };
+  });
+
+  res.status(200).json({ data: result });
+});
+
 export default router;
 
