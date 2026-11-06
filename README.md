@@ -25,13 +25,9 @@
 
 ## 실행 방법
 ### 1. 환경 변수 설정
-'.env' 파일 생성 후 다음 값을 설정(아래 값은 로컬 개발용 예시)
-~~~env
-POSTGRES_DB=mediqueue
-POSTGRES_USER=mediqueue
-POSTGRES_PASSWORD=Local_PASSWORD
-
-DATABASE_URL="postgresql://mediqueue:Local_PASSWORD@localhost:5432/mediqueue?schema=public"
+~~~bash
+cp .env.example .env
+//이후 .env에서 PASSWORD 변경
 ~~~
 .env 파일에는 비밀번호가 포홤되므로 Git에 커밋하지 않는다.
 
