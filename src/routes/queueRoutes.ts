@@ -6,6 +6,38 @@ import { parseBody, parseId, parseQueueStatus } from "../utils/parsers";
 
 const router = Router();
 
+/**
+ * 환자 목록의 초진(true) / 재진(false) 여부를 일괄 조회합니다.
+ * 해당 의사에게 과거 'COMPLETED' 상태의 진료를 받은 이력이 있으면 재진(false), 없으면 초진(true)으로 판별합니다.
+ */
+async function getFirstVisitMap(patientIds: bigint[], doctorId: bigint): Promise<Map<string, boolean>> {
+  const uniquePatientIds = Array.from(new Set(patientIds));
+  if (uniquePatientIds.length === 0) return new Map();
+
+  const completedAppointments = await prisma.appointment.findMany({
+    where: {
+      doctorId,
+      patientId: { in: uniquePatientIds },
+      queueEntry: {
+        status: "COMPLETED",
+      },
+    },
+    select: { patientId: true },
+    distinct: ["patientId"],
+  });
+
+  const revisitSet = new Set(completedAppointments.map((a) => a.patientId.toString()));
+  const map = new Map<string, boolean>();
+
+  for (const pid of uniquePatientIds) {
+    const pidStr = pid.toString();
+    // 과거 완료된 진료 이력이 있으면 재진(false), 없으면 초진(true)
+    map.set(pidStr, !revisitSet.has(pidStr));
+  }
+
+  return map;
+}
+
 // GET /api/doctors/:doctorId/queue
 router.get("/doctors/:doctorId/queue", async (req, res) => {
   const doctorId = parseId(req.params.doctorId, "doctorId");
@@ -36,11 +68,15 @@ router.get("/doctors/:doctorId/queue", async (req, res) => {
     ? new Date(Math.max(now.getTime(), inProgress.startedAt.getTime() + ewmaMinutes * 60_000))
     : now;
 
+  // 대기 환자들의 초진/재진 여부 판별
+  const patientIds = queueEntries.map((entry) => entry.appointment.patientId);
+  const firstVisitMap = await getFirstVisitMap(patientIds, doctorId);
+
   const estimates = calculateQueueWaitTimes(
     queueEntries.map((entry, index) => ({
       ticketId: index,
       appointmentTime: entry.appointment.scheduledAt,
-      isFirstVisit: false,
+      isFirstVisit: firstVisitMap.get(entry.appointment.patientId.toString()) ?? false,
     })),
     ewmaMinutes,
     previousFinish,
@@ -54,19 +90,24 @@ router.get("/doctors/:doctorId/queue", async (req, res) => {
         department: doctor.department,
       },
       generatedAt: now,
-      queue: queueEntries.map((entry, index) => ({
-        id: entry.id.toString(),
-        appointmentId: entry.appointmentId.toString(),
-        queuePosition: entry.queuePosition,
-        status: entry.status.toLowerCase(),
-        scheduledAt: entry.appointment.scheduledAt,
-        estimatedStartTime: estimates[index].estimatedStartTime,
-        estimatedWaitMinutes: Math.max(
-          0,
-          Math.ceil((estimates[index].estimatedStartTime.getTime() - now.getTime()) / 60_000),
-        ),
-        delayMinutes: estimates[index].delayMinutes,
-      })),
+      queue: queueEntries.map((entry, index) => {
+        const isFirstVisit = firstVisitMap.get(entry.appointment.patientId.toString()) ?? false;
+        return {
+          id: entry.id.toString(),
+          appointmentId: entry.appointmentId.toString(),
+          patientId: entry.appointment.patientId.toString(),
+          queuePosition: entry.queuePosition,
+          status: entry.status.toLowerCase(),
+          isFirstVisit,
+          scheduledAt: entry.appointment.scheduledAt,
+          estimatedStartTime: estimates[index].estimatedStartTime,
+          estimatedWaitMinutes: Math.max(
+            0,
+            Math.ceil((estimates[index].estimatedStartTime.getTime() - now.getTime()) / 60_000),
+          ),
+          delayMinutes: estimates[index].delayMinutes,
+        };
+      }),
     },
   });
 });
@@ -143,7 +184,7 @@ router.patch("/queue-entries/:id/status", async (req, res) => {
       },
     });
 
-    // 대기 중인 환자(CHECKED_IN, CALLED) 목록 조회
+    // 남은 대기 중인 환자(CHECKED_IN, CALLED) 목록 조회
     const remainingWaitingEntries = await prisma.queueEntry.findMany({
       where: {
         status: { in: ["CHECKED_IN", "CALLED"] },
@@ -153,10 +194,14 @@ router.patch("/queue-entries/:id/status", async (req, res) => {
       orderBy: [{ queuePosition: "asc" }, { checkedInAt: "asc" }],
     });
 
+    // 남은 대기자들의 초진/재진 여부 판별
+    const patientIds = remainingWaitingEntries.map((e) => e.appointment.patientId);
+    const firstVisitMap = await getFirstVisitMap(patientIds, doctorId);
+
     const waitingList: QueueItem[] = remainingWaitingEntries.map((entry) => ({
       ticketId: Number(entry.id),
       appointmentTime: entry.appointment.scheduledAt,
-      isFirstVisit: false,
+      isFirstVisit: firstVisitMap.get(entry.appointment.patientId.toString()) ?? false,
     }));
 
     recalculatedQueue = calculateQueueWaitTimes(waitingList, newEWMA, now);

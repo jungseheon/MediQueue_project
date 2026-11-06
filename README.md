@@ -234,8 +234,10 @@ git push origin feat/기능이름
         {
           "id": "1",
           "appointmentId": "1",
+          "patientId": "1",
           "queuePosition": 1,
           "status": "checked_in",
+          "isFirstVisit": false,
           "scheduledAt": "2026-11-06T09:00:00.000Z",
           "estimatedStartTime": "2026-11-06T09:00:00.000Z",
           "estimatedWaitMinutes": 15,
