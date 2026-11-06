@@ -42,15 +42,28 @@ ALTER TYPE public."AppointmentStatus" OWNER TO mediqueue;
 CREATE TYPE public."QueueStatus" AS ENUM (
     'booked',
     'checked_in',
-    'called',
-    'in_progress',
+    'cancelled',
+    'disappeared',
+    'inprogress',
     'completed',
-    'no_show',
-    'cancelled'
+    'no_show'
 );
 
 
 ALTER TYPE public."QueueStatus" OWNER TO mediqueue;
+
+--
+-- Name: ServiceType; Type: TYPE; Schema: public; Owner: mediqueue
+--
+
+CREATE TYPE public."ServiceType" AS ENUM (
+    '초진',
+    '재진',
+    '검사'
+);
+
+
+ALTER TYPE public."ServiceType" OWNER TO mediqueue;
 
 SET default_tablespace = '';
 
@@ -187,6 +200,7 @@ CREATE TABLE public.queue_entries (
     queue_position integer NOT NULL,
     status public."QueueStatus" NOT NULL,
     checked_in_at timestamp(6) with time zone,
+    called_at timestamp(6) with time zone,
     started_at timestamp(6) with time zone,
     completed_at timestamp(6) with time zone
 );
@@ -221,7 +235,7 @@ ALTER SEQUENCE public.queue_entries_id_seq OWNED BY public.queue_entries.id;
 
 CREATE TABLE public.service_time_stats (
     doctor_id bigint NOT NULL,
-    service_type text NOT NULL,
+    service_type public."ServiceType" NOT NULL,
     ewma_minutes numeric(6,2) NOT NULL,
     sample_count integer DEFAULT 0 NOT NULL,
     updated_at timestamp(6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
@@ -390,37 +404,37 @@ COPY public.patients (id, display_name) FROM stdin;
 -- Data for Name: queue_entries; Type: TABLE DATA; Schema: public; Owner: mediqueue
 --
 
-COPY public.queue_entries (id, appointment_id, queue_position, status, checked_in_at, started_at, completed_at) FROM stdin;
-2	2	0	booked	\N	\N	\N
-3	3	0	booked	\N	\N	\N
-6	6	0	completed	2026-10-25 23:48:00+00	2026-10-26 00:05:00+00	2026-10-26 00:35:00+00
-7	7	0	completed	2026-10-24 23:03:00+00	2026-10-24 23:20:00+00	2026-10-24 23:50:00+00
-8	8	0	completed	2026-10-23 22:18:00+00	2026-10-23 22:35:00+00	2026-10-23 23:05:00+00
-9	9	0	completed	2026-10-22 23:48:00+00	2026-10-23 00:05:00+00	2026-10-23 00:35:00+00
-10	10	0	completed	2026-10-21 23:03:00+00	2026-10-21 23:20:00+00	2026-10-21 23:50:00+00
-11	11	0	completed	2026-10-20 22:18:00+00	2026-10-20 22:35:00+00	2026-10-20 23:05:00+00
-12	12	0	completed	2026-10-19 23:48:00+00	2026-10-20 00:05:00+00	2026-10-20 00:35:00+00
-13	13	0	completed	2026-10-18 23:03:00+00	2026-10-18 23:20:00+00	2026-10-18 23:50:00+00
-14	14	2	in_progress	2026-10-26 23:05:00+00	2026-10-26 23:17:00+00	\N
-15	15	2	called	2026-10-26 22:25:00+00	\N	\N
-16	16	0	no_show	\N	\N	\N
-17	17	0	no_show	\N	\N	\N
-18	18	0	cancelled	\N	\N	\N
-19	19	1	checked_in	2026-10-27 00:20:00+00	\N	\N
-20	20	1	checked_in	2026-10-27 00:45:00+00	\N	\N
-21	21	1	checked_in	2026-10-27 01:10:00+00	\N	\N
-22	22	1	checked_in	2026-10-27 01:35:00+00	\N	\N
-23	23	1	checked_in	2026-10-27 02:00:00+00	\N	\N
-24	24	0	booked	\N	\N	\N
-25	25	0	booked	\N	\N	\N
-26	26	0	booked	\N	\N	\N
-27	27	0	booked	\N	\N	\N
-28	28	0	booked	\N	\N	\N
-29	29	0	booked	\N	\N	\N
-30	30	0	booked	\N	\N	\N
-4	4	0	booked	\N	\N	\N
-5	5	0	booked	\N	\N	\N
-1	1	0	booked	\N	\N	\N
+COPY public.queue_entries (id, appointment_id, queue_position, status, checked_in_at, called_at, started_at, completed_at) FROM stdin;
+2	2	0	booked	\N	\N	\N	\N
+3	3	0	booked	\N	\N	\N	\N
+6	6	0	completed	2026-10-25 23:48:00+00	\N	2026-10-26 00:05:00+00	2026-10-26 00:35:00+00
+7	7	0	completed	2026-10-24 23:03:00+00	\N	2026-10-24 23:20:00+00	2026-10-24 23:50:00+00
+8	8	0	completed	2026-10-23 22:18:00+00	\N	2026-10-23 22:35:00+00	2026-10-23 23:05:00+00
+9	9	0	completed	2026-10-22 23:48:00+00	\N	2026-10-23 00:05:00+00	2026-10-23 00:35:00+00
+10	10	0	completed	2026-10-21 23:03:00+00	\N	2026-10-21 23:20:00+00	2026-10-21 23:50:00+00
+11	11	0	completed	2026-10-20 22:18:00+00	\N	2026-10-20 22:35:00+00	2026-10-20 23:05:00+00
+12	12	0	completed	2026-10-19 23:48:00+00	\N	2026-10-20 00:05:00+00	2026-10-20 00:35:00+00
+13	13	0	completed	2026-10-18 23:03:00+00	\N	2026-10-18 23:20:00+00	2026-10-18 23:50:00+00
+14	14	2	inprogress	2026-10-26 23:05:00+00	\N	2026-10-26 23:17:00+00	\N
+15	15	2	checked_in	2026-10-26 22:25:00+00	2026-10-26 22:25:00+00	\N	\N
+16	16	0	no_show	\N	\N	\N	\N
+17	17	0	no_show	\N	\N	\N	\N
+18	18	0	cancelled	\N	\N	\N	\N
+19	19	1	checked_in	2026-10-27 00:20:00+00	\N	\N	\N
+20	20	1	checked_in	2026-10-27 00:45:00+00	\N	\N	\N
+21	21	1	checked_in	2026-10-27 01:10:00+00	\N	\N	\N
+22	22	1	checked_in	2026-10-27 01:35:00+00	\N	\N	\N
+23	23	1	checked_in	2026-10-27 02:00:00+00	\N	\N	\N
+24	24	0	booked	\N	\N	\N	\N
+25	25	0	booked	\N	\N	\N	\N
+26	26	0	booked	\N	\N	\N	\N
+27	27	0	booked	\N	\N	\N	\N
+28	28	0	booked	\N	\N	\N	\N
+29	29	0	booked	\N	\N	\N	\N
+30	30	0	booked	\N	\N	\N	\N
+4	4	0	booked	\N	\N	\N	\N
+5	5	0	booked	\N	\N	\N	\N
+1	1	0	booked	\N	\N	\N	\N
 \.
 
 
@@ -429,11 +443,11 @@ COPY public.queue_entries (id, appointment_id, queue_position, status, checked_i
 --
 
 COPY public.service_time_stats (doctor_id, service_type, ewma_minutes, sample_count, updated_at) FROM stdin;
-1	가상 일반 진료	10.00	1	2026-10-27 03:59:49.224601+00
-2	가상 일반 진료	12.00	1	2026-10-27 03:59:49.224601+00
-3	가상 일반 진료	14.00	1	2026-10-27 03:59:49.224601+00
-4	가상 일반 진료	16.00	1	2026-10-27 03:59:49.224601+00
-5	가상 일반 진료	18.00	1	2026-10-27 03:59:49.224601+00
+1	초진	10.00	1	2026-10-27 03:59:49.224601+00
+2	초진	12.00	1	2026-10-27 03:59:49.224601+00
+3	초진	14.00	1	2026-10-27 03:59:49.224601+00
+4	초진	16.00	1	2026-10-27 03:59:49.224601+00
+5	초진	18.00	1	2026-10-27 03:59:49.224601+00
 6	초진	14.00	12	2026-10-27 06:43:43.684051+00
 7	재진	27.25	29	2026-10-27 06:43:43.684051+00
 8	초진	40.50	46	2026-10-27 06:43:43.684051+00
@@ -582,4 +596,3 @@ ALTER TABLE ONLY public.service_time_stats
 --
 
 \unrestrict ZjpEJaFJJta9PheGTmqa1fSKf6yeyTpj9Vfgx6LaXYWGDYkACV7M2KgQcM8W5MM
-

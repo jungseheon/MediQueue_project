@@ -3,6 +3,7 @@ import { Prisma, QueueStatus, type Appointment, type QueueEntry } from "@prisma/
 import { prisma } from "../prisma";
 import { ApiError } from "../errors/apiError";
 import { parseBody, parseDate, parseId, parseStatus } from "../utils/parsers";
+import { processNoShows } from "../services/noShowProcessor";
 
 const router = Router();
 
@@ -40,6 +41,8 @@ function serializeAppointment(appointment: AppointmentRecord) {
 
 // GET /api/appointments
 router.get("/", async (req, res) => {
+  await processNoShows();
+
   const where: Prisma.AppointmentWhereInput = {};
   if (req.query.doctorId !== undefined) {
     where.doctorId = parseId(req.query.doctorId, "doctorId");
@@ -120,11 +123,11 @@ router.patch("/:id", async (req, res) => {
       throw new ApiError(409, "A cancelled appointment cannot be reactivated");
     }
     if (data.status === "CANCELLED" && current.queueEntry) {
-      const cancellableStatuses: QueueStatus[] = ["BOOKED", "CANCELLED"];
+      const cancellableStatuses: QueueStatus[] = ["BOOKED", "CANCELLED", "NO_SHOW"];
       if (!cancellableStatuses.includes(current.queueEntry.status)) {
         throw new ApiError(409, "An appointment with an active queue entry cannot be cancelled");
       }
-      if (current.queueEntry.status === "BOOKED") {
+      if (current.queueEntry.status !== "CANCELLED") {
         await transaction.queueEntry.update({
           where: { appointmentId: id },
           data: { status: "CANCELLED" },
@@ -153,11 +156,11 @@ router.delete("/:id", async (req, res) => {
     if (!current) throw new ApiError(404, "Appointment not found");
 
     if (current.queueEntry) {
-      const cancellableStatuses: QueueStatus[] = ["BOOKED", "CANCELLED"];
+      const cancellableStatuses: QueueStatus[] = ["BOOKED", "CANCELLED", "NO_SHOW"];
       if (!cancellableStatuses.includes(current.queueEntry.status)) {
         throw new ApiError(409, "An appointment with an active queue entry cannot be cancelled");
       }
-      if (current.queueEntry.status === "BOOKED") {
+      if (current.queueEntry.status !== "CANCELLED") {
         await transaction.queueEntry.update({
           where: { appointmentId: id },
           data: { status: "CANCELLED" },
@@ -179,6 +182,7 @@ router.delete("/:id", async (req, res) => {
 router.post("/:id/check-in", async (req, res) => {
   const id = parseId(req.params.id, "id");
   const now = new Date();
+  await processNoShows(now);
 
   const result = await prisma.$transaction(async (tx) => {
     // 1. 예약 정보 확인
@@ -201,7 +205,7 @@ router.post("/:id/check-in", async (req, res) => {
 
     // 이미 체크인 진행 중이거나 완료된 경우 중복 체크인 방지
     if (appointment.queueEntry) {
-      const activeStatuses: QueueStatus[] = ["CHECKED_IN", "CALLED", "IN_PROGRESS", "COMPLETED"];
+      const activeStatuses: QueueStatus[] = ["CHECKED_IN", "INPROGRESS", "COMPLETED", "DISAPPEARED"];
       if (activeStatuses.includes(appointment.queueEntry.status)) {
         throw new ApiError(409, "Appointment is already checked in");
       }
@@ -239,6 +243,7 @@ router.post("/:id/check-in", async (req, res) => {
           queuePosition: nextPosition,
           status: "CHECKED_IN",
           checkedInAt: now,
+          calledAt: null,
         },
       });
     } else {
@@ -283,4 +288,3 @@ router.post("/:id/check-in", async (req, res) => {
 });
 
 export default router;
-

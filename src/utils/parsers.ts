@@ -40,11 +40,11 @@ export function parseStatus(value: unknown): AppointmentStatus {
 const VALID_QUEUE_STATUSES: QueueStatus[] = [
   "BOOKED",
   "CHECKED_IN",
-  "CALLED",
-  "IN_PROGRESS",
+  "CANCELLED",
+  "DISAPPEARED",
+  "INPROGRESS",
   "COMPLETED",
   "NO_SHOW",
-  "CANCELLED",
 ];
 
 export function parseQueueStatus(value: unknown): QueueStatus {
@@ -66,4 +66,3 @@ export function parseBody(value: unknown): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
-
