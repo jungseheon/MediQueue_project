@@ -39,8 +39,10 @@ docker compose up -d db
 
 ### 3. 데이터베이스 스키마 반영
 ~~~sh
-npm run db:push
+npm run db:migrate
 ~~~
+
+새 데이터베이스는 tracked migration들을 순서대로 적용하여 생성한다. 기존 DB를 이 프로젝트의 migration 관리로 옮기는 경우에는 아래의 [기존 데이터베이스 배포 절차](#기존-데이터베이스-배포)를 먼저 따른다. 배포 환경에서는 `prisma db push`를 사용하지 않는다.
 
 ### 4. 개발 서버 실행
 ~~~sh
@@ -66,6 +68,19 @@ npm run build
 npm start
 ~~~
 cf. 현재 'npm test'는 테스트 러너가 설정되어있지 않아 "테스트 미지정 오류" 발생한다.
+
+### 기존 데이터베이스 배포
+
+배포 전 DB 백업을 만들고 복구 가능한지 확인한다. 애플리케이션 인스턴스를 중지하거나 쓰기를 막은 뒤, 기존 스키마를 사용하는 DB에서 **최초 1회만** baseline을 기록하고 이후 migration을 적용한다.
+
+~~~sh
+npx prisma migrate resolve --applied 20261025160000_baseline
+npm run db:migrate
+~~~
+
+`migrate resolve`는 이미 존재하는 테이블을 다시 만들지 않고 해당 스키마가 baseline 상태라고 migration 이력에 기록한다. 현재 코드는 그 다음 migration으로 `called_at`, 새 대기 상태와 서비스 종류 enum을 반영한다. 신규 DB에는 baseline을 `resolve`하지 말고 `npm run db:migrate`만 실행한다.
+
+`npx prisma migrate status`로 적용 상태를 확인하고, `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code`가 차이 없음을 확인한 뒤 새 애플리케이션 버전을 배포한다. migration 적용이 실패하면 새 애플리케이션 버전을 배포하지 말고, 오류를 해결한 후 `npm run db:migrate`를 다시 실행한다. 기존 데이터의 내용 변경이 포함되는 migration은 자동 롤백하지 않는다. 롤백이 필요하면 애플리케이션 버전을 이전 버전으로 되돌리고, 스키마를 되돌려야 하는 경우 백업을 복원한다.
 
 ---
 
