@@ -55,12 +55,13 @@ Attribute(저장해야할 Data type)
     - checked_in : 예약 시간 전 환자가 도착해 체크인을 한 상태
     - no_show : 예약 시간 5분 후 까지 환자가 check_in 안하면 자동으로 no_show 전환
     - disappeared : 체크인을 했지만, 순번이 되어도 진료받지 않는 상태로, 1회 순서 뒤로 미룸(최대 2회, 이후 no_show로 상태 전환)
-    - inprogress : 진료가 진행 중인 상태
+    - in_progress : 진료가 진행 중인 상태
     - completed : 진료가 완료된 상태
 - checked_in_at(TIMESTAMPTZ)
     환자 도착 시간
 - called_at(TIMESTAMPTZ)
     환자 호출 시간
+    호출 여부는 별도 상태(called)로 두지 않고 이 값이 있는지로 판단한다. 부재 후 복귀(return)하면 NULL로 초기화
 - started_at(TIMESTAMPTZ)
     진료 시작 시간
 - completed_at(TIMESTAMPTZ)
@@ -83,3 +84,8 @@ Attribute(저장해야할 Data type)
     지수가중평균을 구할 때 사용한 진료 case 수
 - updated_at(TIMESTAMPTZ)
     sample_count가 갱신된 시간
+
+---
+
+### 변경 이력
+- 2026-11-08: `queue_entries.status`의 `inprogress`를 `in_progress`로 변경. 이전 migration이 남긴 `service_time_stats_legacy`, `queue_entry_status_legacy` 테이블 삭제. 위 5개 테이블 외의 테이블은 없다(`_prisma_migrations` 제외).

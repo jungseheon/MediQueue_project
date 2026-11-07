@@ -77,7 +77,7 @@ router.get("/doctors/:doctorId/queue", async (req, res) => {
       orderBy: [{ queuePosition: "asc" }, { checkedInAt: "asc" }],
     }),
     prisma.queueEntry.findFirst({
-      where: { status: "INPROGRESS", appointment: { doctorId } },
+      where: { status: "IN_PROGRESS", appointment: { doctorId } },
       orderBy: { startedAt: "desc" },
     }),
     getVisitDurations(doctorId),
@@ -175,7 +175,7 @@ router.patch("/queue-entries/:id/status", async (req, res) => {
         ).get(targetEntry.appointment.patientId.toString()) ?? false
       : false;
 
-  if (status === "INPROGRESS") {
+  if (status === "IN_PROGRESS") {
     updateData.startedAt = now;
   } else if (status === "COMPLETED") {
     updateData.completedAt = now;
@@ -439,7 +439,7 @@ router.post("/queue-entries/:id/disappear", async (req, res) => {
       orderBy: [{ queuePosition: "asc" }, { checkedInAt: "asc" }],
     }),
     prisma.queueEntry.findFirst({
-      where: { status: "INPROGRESS", appointment: { doctorId } },
+      where: { status: "IN_PROGRESS", appointment: { doctorId } },
       orderBy: { startedAt: "desc" },
     }),
   ]);

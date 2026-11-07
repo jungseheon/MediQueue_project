@@ -42,7 +42,7 @@ const VALID_QUEUE_STATUSES: QueueStatus[] = [
   "CHECKED_IN",
   "CANCELLED",
   "DISAPPEARED",
-  "INPROGRESS",
+  "IN_PROGRESS",
   "COMPLETED",
   "NO_SHOW",
 ];

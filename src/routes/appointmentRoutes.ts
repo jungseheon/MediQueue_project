@@ -205,7 +205,7 @@ router.post("/:id/check-in", async (req, res) => {
 
     // 이미 체크인 진행 중이거나 완료된 경우 중복 체크인 방지
     if (appointment.queueEntry) {
-      const activeStatuses: QueueStatus[] = ["CHECKED_IN", "INPROGRESS", "COMPLETED", "DISAPPEARED"];
+      const activeStatuses: QueueStatus[] = ["CHECKED_IN", "IN_PROGRESS", "COMPLETED", "DISAPPEARED"];
       if (activeStatuses.includes(appointment.queueEntry.status)) {
         throw new ApiError(409, "Appointment is already checked in");
       }

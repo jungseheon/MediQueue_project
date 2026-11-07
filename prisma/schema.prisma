@@ -63,7 +63,7 @@ model QueueEntry {
   queuePosition Int         @map("queue_position") //현재 대기실에서의 순번
   status        QueueStatus
   checkedInAt   DateTime?   @map("checked_in_at") @db.Timestamptz //현장 도착 접수 시각
-  calledAt      DateTime?   @map("called_at") @db.Timestamptz
+  calledAt      DateTime?   @map("called_at") @db.Timestamptz //진료실 호출 시각 (호출 상태는 따로 두지 않음)
   startedAt     DateTime?   @map("started_at") @db.Timestamptz //진료실 입장/진료 시작 시각
   completedAt   DateTime?   @map("completed_at") @db.Timestamptz //진료 완료 시각
 
@@ -89,24 +89,6 @@ model ServiceTimeStat {
   @@map("service_time_stats")
 }
 
-model ServiceTimeStatLegacy {
-  doctorId    BigInt   @map("doctor_id")
-  serviceType String   @map("service_type")
-  ewmaMinutes Decimal  @map("ewma_minutes") @db.Decimal(6, 2)
-  sampleCount Int      @map("sample_count")
-  updatedAt   DateTime @map("updated_at") @db.Timestamptz
-
-  @@id([doctorId, serviceType])
-  @@map("service_time_stats_legacy")
-}
-
-model QueueEntryStatusLegacy {
-  queueEntryId BigInt @id @map("queue_entry_id")
-  status       String
-
-  @@map("queue_entry_status_legacy")
-}
-
 // Enum (상태 정의)
 enum AppointmentStatus {
   BOOKED    @map("booked") //예약 확정
@@ -118,7 +100,7 @@ enum QueueStatus {
   CHECKED_IN  @map("checked_in") //현장 접수 완료 (대기 중)
   CANCELLED   @map("cancelled") //예약 또는 당일 접수 취소
   DISAPPEARED @map("disappeared") //호출 후 부재
-  INPROGRESS  @map("inprogress") //진료 중
+  IN_PROGRESS @map("in_progress") //진료 중
   COMPLETED   @map("completed") //진료 완료
   NO_SHOW     @map("no_show") //예약 시각 5분 후까지 미방문
 }

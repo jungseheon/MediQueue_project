@@ -7,8 +7,9 @@
 - 시간 입력은 ISO 8601 문자열이어야 합니다. 예: `2026-11-10T09:30:00+09:00`.
 - ID 입력은 양의 정수 또는 숫자 문자열입니다. 응답의 BigInt ID는 문자열로 반환됩니다.
 - 예약 상태는 `booked`, `cancelled`입니다.
-- 대기열 상태는 `booked`, `checked_in`, `cancelled`, `disappeared`, `inprogress`, `completed`, `no_show`입니다. `called`는 대기열 상태가 아니며, 호출 시각을 `called_at`에 기록합니다.
+- 대기열 상태는 `booked`, `checked_in`, `cancelled`, `disappeared`, `in_progress`, `completed`, `no_show`입니다. `called`는 대기열 상태가 아니며, 호출 시각을 `called_at`에 기록합니다.
 - 예약 조회 결과의 상태 문자열은 소문자로 반환됩니다.
+- 2026-11-08 변경: 진료 중 상태 문자열이 `inprogress`에서 `in_progress`로 바뀌었습니다. 요청 본문과 응답 모두 `in_progress`를 사용합니다. `inprogress`를 보내면 `400 Bad Request`입니다.
 - 일반적인 오류 응답 형식은 `{ "error": "오류 설명" }`입니다.
 
 ## 2. API 목록
@@ -203,7 +204,7 @@ curl -i -X POST http://localhost:3000/api/appointments/1/check-in
 
 `GET /api/doctors/:doctorId/queue`
 
-특정 의사의 대기열을 조회합니다. 대기열에는 `checked_in`, `disappeared` 상태가 포함되며, 현재 `inprogress`인 환자는 대기 목록과 별도로 남은 시간 계산에 반영됩니다. 조회 전에 전체 예약의 노쇼 처리가 실행됩니다.
+특정 의사의 대기열을 조회합니다. 대기열에는 `checked_in`, `disappeared` 상태가 포함되며, 현재 `in_progress`인 환자는 대기 목록과 별도로 남은 시간 계산에 반영됩니다. 조회 전에 전체 예약의 노쇼 처리가 실행됩니다.
 
 ```sh
 curl -i http://localhost:3000/api/doctors/1/queue
@@ -243,21 +244,21 @@ curl -i http://localhost:3000/api/doctors/1/queue
 JSON 본문에서 `status`를 지정합니다.
 
 ```json
-{ "status": "inprogress" }
+{ "status": "in_progress" }
 ```
 
-허용 상태: `booked`, `checked_in`, `cancelled`, `disappeared`, `inprogress`, `completed`, `no_show`.
+허용 상태: `booked`, `checked_in`, `cancelled`, `disappeared`, `in_progress`, `completed`, `no_show`.
 
 이 API는 지정된 상태로 직접 변경하며, 상태 간 전이 순서는 검증하지 않습니다. 환자 호출·부재·복귀 동작에는 아래 전용 API를 사용하는 것을 권장합니다.
 
-- `inprogress`: 현재 시각을 `startedAt`으로 기록합니다.
+- `in_progress`: 현재 시각을 `startedAt`으로 기록합니다.
 - `completed`: 현재 시각을 `completedAt`에 기록하고, 실제 진료 시간을 이용해 EWMA를 갱신합니다. 완료 이전에 같은 의사에게 완료된 진료 기록이 있으면 `재진`, 없으면 `초진` 통계를 갱신합니다. 이후 남은 대기자의 예상 시작·대기·지연 시간을 재계산합니다.
 - 다른 허용 상태: 전달한 상태만 기록합니다. 별도의 시각이나 EWMA 변경은 없습니다.
 
 ```sh
 curl -i -X PATCH http://localhost:3000/api/queue-entries/1/status \
   -H 'Content-Type: application/json' \
-  --data '{"status":"inprogress"}'
+  --data '{"status":"in_progress"}'
 
 curl -i -X PATCH http://localhost:3000/api/queue-entries/1/status \
   -H 'Content-Type: application/json' \

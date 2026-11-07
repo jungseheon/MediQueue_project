@@ -37,12 +37,15 @@ npm install
 docker compose up -d db
 ~~~
 
-### 3. 데이터베이스 스키마 반영
+### 3. 데이터베이스 스키마 반영 및 샘플 데이터 넣기
 ~~~sh
 npm run db:migrate
+docker exec -i mediqueue-db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB' < dump.sql   # 선택: 샘플 데이터
 ~~~
 
-새 데이터베이스는 tracked migration들을 순서대로 적용하여 생성한다. 기존 DB를 이 프로젝트의 migration 관리로 옮기는 경우에는 아래의 [기존 데이터베이스 배포 절차](#기존-데이터베이스-배포)를 먼저 따른다. 배포 환경에서는 `prisma db push`를 사용하지 않는다.
+스키마는 `prisma/migrations`의 migration으로만 만든다(`prisma db push`는 사용하지 않는다). `dump.sql`은 스키마 없이 데이터만 담고 있으므로, migration을 적용한 빈 DB에 1회만 복원한다.
+
+스키마를 바꿀 때는 `prisma/schema.prisma`를 수정한 뒤 `npm run db:migrate:dev -- --name 변경내용`으로 새 migration을 만들고, 생성된 migration 폴더를 함께 커밋한다.
 
 ### 4. 개발 서버 실행
 ~~~sh
@@ -69,18 +72,28 @@ npm start
 ~~~
 cf. 현재 'npm test'는 테스트 러너가 설정되어있지 않아 "테스트 미지정 오류" 발생한다.
 
-### 기존 데이터베이스 배포
+### DB 구조 정리 (2026-11-08) 이후 기존 로컬 DB 갱신
 
-배포 전 DB 백업을 만들고 복구 가능한지 확인한다. 애플리케이션 인스턴스를 중지하거나 쓰기를 막은 뒤, 기존 스키마를 사용하는 DB에서 **최초 1회만** baseline을 기록하고 이후 migration을 적용한다.
+2026-11-08에 migration 이력을 `20261108000000_init` 하나로 합쳤다. 이전 migration(`20261025154845_init`, `20261025160000_baseline`, `20261106143000_align_entity_schema`)을 적용했던 로컬 DB는 이력이 맞지 않으므로 아래처럼 DB를 다시 만든다. **기존 DB의 데이터는 모두 지워진다.**
 
 ~~~sh
-npx prisma migrate resolve --applied 20261025160000_baseline
+docker exec mediqueue-db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"'
 npm run db:migrate
+docker exec -i mediqueue-db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB' < dump.sql
+npx prisma generate
 ~~~
 
-`migrate resolve`는 이미 존재하는 테이블을 다시 만들지 않고 해당 스키마가 baseline 상태라고 migration 이력에 기록한다. 현재 코드는 그 다음 migration으로 `called_at`, 새 대기 상태와 서비스 종류 enum을 반영한다. 신규 DB에는 baseline을 `resolve`하지 말고 `npm run db:migrate`만 실행한다.
+`npx prisma migrate status`가 "Database schema is up to date!"를 출력하면 정상이다. 변경 내용은 아래 [DB 변경 이력](#db-변경-이력)을 참고한다.
 
-`npx prisma migrate status`로 적용 상태를 확인하고, `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code`가 차이 없음을 확인한 뒤 새 애플리케이션 버전을 배포한다. migration 적용이 실패하면 새 애플리케이션 버전을 배포하지 말고, 오류를 해결한 후 `npm run db:migrate`를 다시 실행한다. 기존 데이터의 내용 변경이 포함되는 migration은 자동 롤백하지 않는다. 롤백이 필요하면 애플리케이션 버전을 이전 버전으로 되돌리고, 스키마를 되돌려야 하는 경우 백업을 복원한다.
+## DB 변경 이력
+
+### 2026-11-08 DB 구조 정리
+- **migration 통합**: 순서가 꼬이고(baseline이 나중에 적용됨) 저장소에 없는 migration이 기록된 이력을 정리하여 `prisma/migrations/20261108000000_init` 하나로 합쳤다.
+- **임시 테이블 삭제**: 이전 migration이 남긴 `service_time_stats_legacy`, `queue_entry_status_legacy` 테이블과 Prisma 모델(`ServiceTimeStatLegacy`, `QueueEntryStatusLegacy`)을 삭제했다. 두 테이블의 데이터(예전 `general` 진료시간 통계 5건, 예전 `called` 상태 기록 1건)는 현재 코드에서 사용하지 않아 옮기지 않았다.
+- **대기 상태 이름 변경**: `inprogress` → `in_progress` (Prisma enum `INPROGRESS` → `IN_PROGRESS`). 다른 상태(`checked_in`, `no_show`)와 같은 snake_case로 맞췄다. **API 요청·응답의 상태 문자열도 `in_progress`로 바뀐다.**
+- **`called` 상태 없음 유지**: 호출 여부는 대기 상태가 아니라 `queue_entries.called_at` 시각으로만 표현한다(기존 설계 유지, 문서와 스키마 주석에 명시).
+- **스키마 기준 일원화**: `DB/01_init.sql`(손으로 쓴 오래된 DDL)을 삭제하고, `npm run db:push` 스크립트를 없앴다. 스키마는 `prisma/schema.prisma`와 migration만 기준으로 한다. 스키마 변경용으로 `npm run db:migrate:dev`를 추가했다.
+- **`dump.sql`을 데이터 전용으로 변경**: 스키마는 migration이 만들고, `dump.sql`은 샘플 데이터만 넣는다.
 
 ---
 
@@ -135,7 +148,7 @@ git push origin feat/기능이름
 | POST | `/api/queue-entries/:id/disappear` | 호출 후 부재 처리, 순번 조정 및 대기시간 재계산 |
 | POST | `/api/queue-entries/:id/return` | 부재 환자를 대기 상태로 복귀 |
 | GET | `/api/doctors/:doctorId/queue` | 특정 의사의 실시간 대기열 목록 및 EWMA 기반 예상 시작 시각·대기·지연시간 조회 |
-| PATCH | `/api/queue-entries/:id/status` | 대기열 상태 변경 (`inprogress`, `completed` 등). 진료 완료 시 실제 소요시간 기반 EWMA 및 전체 대기시간 자동 재계산 |
+| PATCH | `/api/queue-entries/:id/status` | 대기열 상태 변경 (`in_progress`, `completed` 등). 진료 완료 시 실제 소요시간 기반 EWMA 및 전체 대기시간 자동 재계산 |
 
 ---
 
@@ -267,7 +280,7 @@ git push origin feat/기능이름
 - **Path**: `GET /api/doctors/:doctorId/queue`
 - **설명**: 
   - 특정 의사의 현재 대기열(`checked_in`, `disappeared`)을 조회합니다.
-  - 현재 진료 중인 환자(`inprogress`)의 시작 시각 및 초진·재진별 EWMA 평균 진료 시간을 반영하여 **각 대기 환자의 예상 시작 시각(`estimatedStartTime`), 남은 대기 시간(`estimatedWaitMinutes`), 지연 시간(`delayMinutes`)**을 반환합니다.
+  - 현재 진료 중인 환자(`in_progress`)의 시작 시각 및 초진·재진별 EWMA 평균 진료 시간을 반영하여 **각 대기 환자의 예상 시작 시각(`estimatedStartTime`), 남은 대기 시간(`estimatedWaitMinutes`), 지연 시간(`delayMinutes`)**을 반환합니다.
   - 조회 시 전역 예약 노쇼 처리를 먼저 실행합니다. 대기 목록에는 `checked_in`, `disappeared` 상태가 포함되며, 진료 중 환자는 대기 목록과 별도로 예상 시간 계산에 반영됩니다.
   - 의사 ID가 없으면 `404`를 반환합니다. 진료시간 통계가 없으면 초진 12분, 재진 8분 기본값을 사용합니다.
 - **요청 예시**:
@@ -304,12 +317,12 @@ git push origin feat/기능이름
 - **Path**: `PATCH /api/queue-entries/:id/status`
 - **Request Body**:
   ```json
-  { "status": "inprogress" }
+  { "status": "in_progress" }
   ```
 - **설명**: 
-  - 대기 항목의 상태를 다음 중 하나로 지정합니다: `booked`, `checked_in`, `cancelled`, `disappeared`, `inprogress`, `completed`, `no_show`.
+  - 대기 항목의 상태를 다음 중 하나로 지정합니다: `booked`, `checked_in`, `cancelled`, `disappeared`, `in_progress`, `completed`, `no_show`.
   - 이 API는 요청한 상태를 직접 저장하며, 상태 간 전이 순서를 검증하지 않습니다. 보통 호출 시 부재는 `/disappear`, 자리 복귀는 `/return`을 사용합니다.
-  - **`inprogress` (진료 시작)**: 진료 시작 시각(`startedAt`)을 기록합니다.
+  - **`in_progress` (진료 시작)**: 진료 시작 시각(`startedAt`)을 기록합니다.
   - **`completed` (진료 완료)**: 
     1. 완료 시각을 기록하고, 시작 시각부터 실제 소요 시간을 계산합니다.
     2. 과거 완료 이력이 있는 환자는 재진, 없으면 초진으로 분류해 해당 종류의 EWMA 통계를 갱신합니다.
@@ -320,7 +333,7 @@ git push origin feat/기능이름
   # 1. 진료실 입장 및 진료 시작
   curl -i -X PATCH http://localhost:3000/api/queue-entries/1/status \
     -H 'Content-Type: application/json' \
-    --data '{"status":"inprogress"}'
+    --data '{"status":"in_progress"}'
 
   # 2. 진료 완료 (소요시간 계산 -> EWMA 및 남은 대기자 대기시간 자동 재계산)
   curl -i -X PATCH http://localhost:3000/api/queue-entries/1/status \
