@@ -1,113 +1,38 @@
 import { Router } from "express";
+import type { Prisma, QueueStatus } from "@prisma/client";
 import { prisma } from "../prisma";
-import { calculateEWMA, calculateQueueWaitTimes, type QueueItem } from "../services/calculator";
+import { calculateEWMA } from "../services/calculator";
+import {
+  ACTIVE_WAITING_STATUSES,
+  DEFAULT_FIRST_VISIT_MINUTES,
+  DEFAULT_FOLLOW_UP_MINUTES,
+  estimateDoctorQueue,
+  getFirstVisitMap,
+  lockDoctorQueue,
+} from "../services/queueEstimator";
 import { ApiError } from "../errors/apiError";
-import { parseBody, parseId, parseQueueStatus } from "../utils/parsers";
+import { parseBody, parseId, parseIntInRange, parseQueueStatus } from "../utils/parsers";
 import { processNoShows } from "../services/noShowProcessor";
 
 const router = Router();
 
-// 대기열에 포함되는 활성 대기 상태들
-const ACTIVE_WAITING_STATUSES = ["CHECKED_IN", "DISAPPEARED"] as const;
-
-async function getVisitDurations(doctorId: bigint) {
-  const serviceStats = await prisma.serviceTimeStat.findMany({
-    where: { doctorId, serviceType: { in: ["FIRST_VISIT", "FOLLOW_UP"] } },
-  });
-  return {
-    firstVisitTime: Number(
-      serviceStats.find((stat) => stat.serviceType === "FIRST_VISIT")?.ewmaMinutes ?? 12,
-    ),
-    revisitTime: Number(
-      serviceStats.find((stat) => stat.serviceType === "FOLLOW_UP")?.ewmaMinutes ?? 8,
-    ),
-  };
-}
-
-/**
- * 환자 목록의 초진(true) / 재진(false) 여부를 일괄 조회합니다.
- * 해당 의사에게 과거 'COMPLETED' 상태의 진료를 받은 이력이 있으면 재진(false), 없으면 초진(true)으로 판별합니다.
- */
-async function getFirstVisitMap(
-  patientIds: bigint[],
-  doctorId: bigint,
-  excludeAppointmentId?: bigint,
-): Promise<Map<string, boolean>> {
-  const uniquePatientIds = Array.from(new Set(patientIds));
-  if (uniquePatientIds.length === 0) return new Map();
-
-  const completedAppointments = await prisma.appointment.findMany({
-    where: {
-      doctorId,
-      patientId: { in: uniquePatientIds },
-      id: excludeAppointmentId ? { not: excludeAppointmentId } : undefined,
-      queueEntry: {
-        status: "COMPLETED",
-      },
-    },
-    select: { patientId: true },
-    distinct: ["patientId"],
-  });
-
-  const revisitSet = new Set(completedAppointments.map((a) => a.patientId.toString()));
-  const map = new Map<string, boolean>();
-
-  for (const pid of uniquePatientIds) {
-    const pidStr = pid.toString();
-    map.set(pidStr, !revisitSet.has(pidStr));
-  }
-
-  return map;
-}
+// 상태 API로 바꿀 때 직전 상태가 반드시 이 중 하나여야 하는 상태들
+// (진료 시작은 대기 중인 환자만, 진료 완료는 진료 중인 환자만 가능)
+const REQUIRED_PREVIOUS_STATUSES: Partial<Record<QueueStatus, QueueStatus[]>> = {
+  IN_PROGRESS: ["CHECKED_IN", "DISAPPEARED"],
+  COMPLETED: ["IN_PROGRESS"],
+};
 
 // GET /api/doctors/:doctorId/queue
 router.get("/doctors/:doctorId/queue", async (req, res) => {
-  await processNoShows();
   const doctorId = parseId(req.params.doctorId, "doctorId");
-  const [doctor, queueEntries, inProgress, visitDurations] = await Promise.all([
-    prisma.doctor.findUnique({
-      where: { id: doctorId },
-    }),
-    prisma.queueEntry.findMany({
-      where: {
-        status: { in: [...ACTIVE_WAITING_STATUSES] },
-        appointment: { doctorId },
-      },
-      include: { appointment: true },
-      orderBy: [{ queuePosition: "asc" }, { checkedInAt: "asc" }],
-    }),
-    prisma.queueEntry.findFirst({
-      where: { status: "IN_PROGRESS", appointment: { doctorId } },
-      orderBy: { startedAt: "desc" },
-    }),
-    getVisitDurations(doctorId),
-  ]);
+  await processNoShows();
 
+  const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
   const now = new Date();
-  const { firstVisitTime, revisitTime } = visitDurations;
-  const ewmaMinutes = (firstVisitTime + revisitTime) / 2;
-  const previousFinish = inProgress?.startedAt
-    ? new Date(Math.max(now.getTime(), inProgress.startedAt.getTime() + ewmaMinutes * 60_000))
-    : now;
-
-  // 대기 환자들의 초진/재진 여부 판별
-  const patientIds = queueEntries.map((entry) => entry.appointment.patientId);
-  const firstVisitMap = await getFirstVisitMap(patientIds, doctorId);
-
-  const estimates = calculateQueueWaitTimes(
-    queueEntries.map((entry, index) => ({
-      ticketId: index,
-      appointmentTime: entry.appointment.scheduledAt,
-      isFirstVisit: firstVisitMap.get(entry.appointment.patientId.toString()) ?? false,
-    })),
-    ewmaMinutes,
-    previousFinish,
-    10,
-    firstVisitTime,
-    revisitTime,
-  );
+  const queue = await estimateDoctorQueue(doctorId, now);
 
   res.json({
     data: {
@@ -117,24 +42,21 @@ router.get("/doctors/:doctorId/queue", async (req, res) => {
         department: doctor.department,
       },
       generatedAt: now,
-      queue: queueEntries.map((entry, index) => {
-        const isFirstVisit = firstVisitMap.get(entry.appointment.patientId.toString()) ?? false;
-        return {
-          id: entry.id.toString(),
-          appointmentId: entry.appointmentId.toString(),
-          patientId: entry.appointment.patientId.toString(),
-          queuePosition: entry.queuePosition,
-          status: entry.status.toLowerCase(),
-          isFirstVisit,
-          scheduledAt: entry.appointment.scheduledAt,
-          estimatedStartTime: estimates[index].estimatedStartTime,
-          estimatedWaitMinutes: Math.max(
-            0,
-            Math.ceil((estimates[index].estimatedStartTime.getTime() - now.getTime()) / 60_000),
-          ),
-          delayMinutes: estimates[index].delayMinutes,
-        };
-      }),
+      queue: queue.map(({ entry, isFirstVisit, estimate }) => ({
+        id: entry.id.toString(),
+        appointmentId: entry.appointmentId.toString(),
+        patientId: entry.appointment.patientId.toString(),
+        queuePosition: entry.queuePosition,
+        status: entry.status.toLowerCase(),
+        isFirstVisit,
+        scheduledAt: entry.appointment.scheduledAt,
+        estimatedStartTime: estimate.estimatedStartTime,
+        estimatedWaitMinutes: Math.max(
+          0,
+          Math.ceil((estimate.estimatedStartTime.getTime() - now.getTime()) / 60_000),
+        ),
+        delayMinutes: estimate.delayMinutes,
+      })),
     },
   });
 });
@@ -147,116 +69,102 @@ router.patch("/queue-entries/:id/status", async (req, res) => {
 
   const now = new Date();
 
-  const targetEntry = await prisma.queueEntry.findUnique({
+  const found = await prisma.queueEntry.findUnique({
     where: { id: queueEntryId },
     include: { appointment: true },
   });
+  if (!found) throw new ApiError(404, "Queue entry not found");
 
-  if (!targetEntry) {
-    throw new ApiError(404, "Queue entry not found");
-  }
+  const doctorId = found.appointment.doctorId;
 
-  const doctorId = targetEntry.appointment.doctorId;
+  const { updatedEntry, newEWMA } = await prisma.$transaction(async (tx) => {
+    await lockDoctorQueue(tx, doctorId);
 
-  const updateData: {
-    status: typeof status;
-    startedAt?: Date;
-    completedAt?: Date;
-  } = { status };
+    // 잠금을 잡은 뒤 다시 읽어 동시에 들어온 요청과 겹치지 않게 한다
+    const targetEntry = await tx.queueEntry.findUnique({
+      where: { id: queueEntryId },
+      include: { appointment: true },
+    });
+    if (!targetEntry) throw new ApiError(404, "Queue entry not found");
 
-  const firstVisitAtCompletion =
-    status === "COMPLETED"
-      ? (
-          await getFirstVisitMap(
-            [targetEntry.appointment.patientId],
-            doctorId,
-            targetEntry.appointmentId,
-          )
-        ).get(targetEntry.appointment.patientId.toString()) ?? false
-      : false;
+    const requiredPrevious = REQUIRED_PREVIOUS_STATUSES[status];
+    if (requiredPrevious && !requiredPrevious.includes(targetEntry.status)) {
+      throw new ApiError(
+        409,
+        `Cannot change status from '${targetEntry.status.toLowerCase()}' to '${status.toLowerCase()}'`,
+      );
+    }
 
-  if (status === "IN_PROGRESS") {
-    updateData.startedAt = now;
-  } else if (status === "COMPLETED") {
-    updateData.completedAt = now;
-  }
+    if (status === "IN_PROGRESS") {
+      const otherInProgress = await tx.queueEntry.findFirst({
+        where: { status: "IN_PROGRESS", appointment: { doctorId }, id: { not: queueEntryId } },
+      });
+      if (otherInProgress) {
+        throw new ApiError(409, "Another patient is already in progress for this doctor");
+      }
+    }
 
-  const updatedEntry = await prisma.queueEntry.update({
-    where: { id: queueEntryId },
-    data: updateData,
+    const updateData: Prisma.QueueEntryUpdateInput = { status };
+    if (status === "IN_PROGRESS") {
+      updateData.startedAt = now;
+    } else if (status === "COMPLETED") {
+      updateData.completedAt = now;
+    }
+
+    const updated = await tx.queueEntry.update({
+      where: { id: queueEntryId },
+      data: updateData,
+    });
+
+    // 진료 완료 시 실제 진료시간(진료 시작 ~ 완료)으로 초진/재진 EWMA 갱신
+    let ewma: number | null = null;
+    if (status === "COMPLETED" && targetEntry.startedAt) {
+      const patientId = targetEntry.appointment.patientId;
+      const isFirstVisit =
+        (await getFirstVisitMap([patientId], doctorId, targetEntry.appointmentId, tx)).get(
+          patientId.toString(),
+        ) ?? false;
+      const serviceType = isFirstVisit ? "FIRST_VISIT" : "FOLLOW_UP";
+
+      const actualDurationMinutes = Math.max(
+        1,
+        Math.round((now.getTime() - targetEntry.startedAt.getTime()) / (1000 * 60)),
+      );
+
+      const stat = await tx.serviceTimeStat.findUnique({
+        where: { doctorId_serviceType: { doctorId, serviceType } },
+      });
+      const currentEWMA = stat
+        ? Number(stat.ewmaMinutes)
+        : isFirstVisit
+          ? DEFAULT_FIRST_VISIT_MINUTES
+          : DEFAULT_FOLLOW_UP_MINUTES;
+
+      ewma = calculateEWMA(currentEWMA, actualDurationMinutes, 0.3);
+
+      await tx.serviceTimeStat.upsert({
+        where: { doctorId_serviceType: { doctorId, serviceType } },
+        update: {
+          ewmaMinutes: ewma,
+          sampleCount: { increment: 1 },
+        },
+        create: {
+          doctorId,
+          serviceType,
+          ewmaMinutes: ewma,
+          sampleCount: 1,
+        },
+      });
+    }
+
+    return { updatedEntry: updated, newEWMA: ewma };
   });
 
-  let newEWMA: number | null = null;
-  let recalculatedQueue: ReturnType<typeof calculateQueueWaitTimes> = [];
-
-  // 진료 완료 시 EWMA 재연산 및 대기열 재계산
-  if (status === "COMPLETED") {
-    const startTime = targetEntry.startedAt ?? targetEntry.checkedInAt ?? now;
-    const actualDurationMinutes = Math.max(
-      1,
-      Math.round((now.getTime() - new Date(startTime).getTime()) / (1000 * 60)),
-    );
-
-    const serviceType = firstVisitAtCompletion ? "FIRST_VISIT" : "FOLLOW_UP";
-    const stat = await prisma.serviceTimeStat.findUnique({
-      where: {
-        doctorId_serviceType: { doctorId, serviceType },
-      },
-    });
-
-    const currentEWMA = stat
-      ? Number(stat.ewmaMinutes)
-      : serviceType === "FIRST_VISIT"
-        ? 12
-        : 8;
-    const alpha = 0.3;
-
-    newEWMA = calculateEWMA(currentEWMA, actualDurationMinutes, alpha);
-
-    await prisma.serviceTimeStat.upsert({
-      where: { doctorId_serviceType: { doctorId, serviceType } },
-      update: {
-        ewmaMinutes: newEWMA,
-        sampleCount: { increment: 1 },
-      },
-      create: {
-        doctorId,
-        serviceType,
-        ewmaMinutes: newEWMA,
-        sampleCount: 1,
-      },
-    });
-
-    // 남은 대기 중인 환자(CHECKED_IN, DISAPPEARED) 목록 조회
-    const remainingWaitingEntries = await prisma.queueEntry.findMany({
-      where: {
-        status: { in: [...ACTIVE_WAITING_STATUSES] },
-        appointment: { doctorId },
-      },
-      include: { appointment: true },
-      orderBy: [{ queuePosition: "asc" }, { checkedInAt: "asc" }],
-    });
-
-    // 남은 대기자들의 초진/재진 여부 판별
-    const patientIds = remainingWaitingEntries.map((e) => e.appointment.patientId);
-    const firstVisitMap = await getFirstVisitMap(patientIds, doctorId);
-
-    const waitingList: QueueItem[] = remainingWaitingEntries.map((entry) => ({
-      ticketId: Number(entry.id),
-      appointmentTime: entry.appointment.scheduledAt,
-      isFirstVisit: firstVisitMap.get(entry.appointment.patientId.toString()) ?? false,
-    }));
-
-    const visitDurations = await getVisitDurations(doctorId);
-    recalculatedQueue = calculateQueueWaitTimes(
-      waitingList,
-      (visitDurations.firstVisitTime + visitDurations.revisitTime) / 2,
-      now,
-      10,
-      visitDurations.firstVisitTime,
-      visitDurations.revisitTime,
-    );
-  }
+  // 진료 완료 시 남은 대기자(CHECKED_IN, DISAPPEARED)의 예상 시간 재계산
+  const recalculatedQueue =
+    status === "COMPLETED"
+      ? (await estimateDoctorQueue(doctorId, now)).map(({ estimate }) => estimate)
+      : [];
 
   res.json({
     data: {
@@ -290,8 +198,7 @@ router.post("/queue-entries/:id/call", async (req, res) => {
 
   if (!entry) throw new ApiError(404, "Queue entry not found");
 
-  const callableStatuses = ["CHECKED_IN", "DISAPPEARED"];
-  if (!callableStatuses.includes(entry.status)) {
+  if (!ACTIVE_WAITING_STATUSES.includes(entry.status)) {
     throw new ApiError(
       409,
       `Cannot call patient with status '${entry.status.toLowerCase()}'. Patient must be in checked_in or disappeared status.`,
@@ -329,42 +236,51 @@ router.post("/queue-entries/:id/call", async (req, res) => {
 // POST /api/queue-entries/:id/disappear (호출 후 부재중 -> 'disappeared' 상태 변경 및 순번 1~2칸 뒤로 연기)
 router.post("/queue-entries/:id/disappear", async (req, res) => {
   const queueEntryId = parseId(req.params.id, "id");
-  const body = req.body && typeof req.body === "object" ? req.body : {};
-  const delayPositions = Math.max(1, Math.min(10, Number(body.delayPositions ?? 2))); // 기본 2칸 미룸
+  const body = req.body === undefined ? {} : parseBody(req.body);
+  const delayPositions =
+    body.delayPositions === undefined
+      ? 2 // 기본 2칸 미룸
+      : parseIntInRange(body.delayPositions, "delayPositions", 1, 10);
 
-  const targetEntry = await prisma.queueEntry.findUnique({
+  const found = await prisma.queueEntry.findUnique({
     where: { id: queueEntryId },
     include: {
       appointment: {
-        include: { doctor: true, patient: true },
+        include: { patient: true },
       },
     },
   });
 
-  if (!targetEntry) throw new ApiError(404, "Queue entry not found");
+  if (!found) throw new ApiError(404, "Queue entry not found");
 
-  if (
-    (targetEntry.status !== "CHECKED_IN" && targetEntry.status !== "DISAPPEARED") ||
-    !targetEntry.calledAt
-  ) {
-    throw new ApiError(
-      409,
-      `Cannot mark as disappeared for entry with status '${targetEntry.status.toLowerCase()}'. The patient must have been called.`,
-    );
-  }
-
-  const doctorId = targetEntry.appointment.doctorId;
-  const patientName = targetEntry.appointment.patient.displayName;
+  const doctorId = found.appointment.doctorId;
+  const patientName = found.appointment.patient.displayName;
 
   const result = await prisma.$transaction(async (tx) => {
-    // 현재 환자 뒤에 대기 중인 환자들 조회 (순서대로)
+    await lockDoctorQueue(tx, doctorId);
+
+    const targetEntry = await tx.queueEntry.findUnique({ where: { id: queueEntryId } });
+    if (!targetEntry) throw new ApiError(404, "Queue entry not found");
+
+    if (
+      (targetEntry.status !== "CHECKED_IN" && targetEntry.status !== "DISAPPEARED") ||
+      !targetEntry.calledAt
+    ) {
+      throw new ApiError(
+        409,
+        `Cannot mark as disappeared for entry with status '${targetEntry.status.toLowerCase()}'. The patient must have been called.`,
+      );
+    }
+
+    // 현재 환자 바로 뒤에 대기 중인 환자들 (최대 delayPositions명, 순서대로)
     const subsequentEntries = await tx.queueEntry.findMany({
       where: {
         appointment: { doctorId },
-        status: { in: [...ACTIVE_WAITING_STATUSES] },
+        status: { in: ACTIVE_WAITING_STATUSES },
         queuePosition: { gt: targetEntry.queuePosition },
       },
       orderBy: { queuePosition: "asc" },
+      take: delayPositions,
     });
 
     if (subsequentEntries.length === 0) {
@@ -385,23 +301,21 @@ router.post("/queue-entries/:id/disappear", async (req, res) => {
       };
     }
 
-    const actualShift = Math.min(delayPositions, subsequentEntries.length);
-    const targetNewPosition = targetEntry.queuePosition + actualShift;
-    const shiftedEntryIds = subsequentEntries.slice(0, actualShift).map((e) => e.id);
+    // 순번을 한 칸씩 돌린다: 뒤 환자들은 각각 바로 앞 사람의 순번을 받고,
+    // 대상 환자는 마지막으로 앞지른 환자의 순번을 받는다. (순번이 연속되지 않아도 정확함)
+    const positions = [
+      targetEntry.queuePosition,
+      ...subsequentEntries.map((entry) => entry.queuePosition),
+    ];
+    for (const [index, entry] of subsequentEntries.entries()) {
+      await tx.queueEntry.update({
+        where: { id: entry.id },
+        data: { queuePosition: positions[index] },
+      });
+    }
 
-    // 대상 환자 임시 번호로 변경
-    await tx.queueEntry.update({
-      where: { id: queueEntryId },
-      data: { queuePosition: -1 },
-    });
-
-    // 뒤에 있던 환자들을 앞으로 당김
-    await tx.queueEntry.updateMany({
-      where: { id: { in: shiftedEntryIds } },
-      data: { queuePosition: { decrement: 1 } },
-    });
-
-    // 대상 환자의 새 순번 부여 및 상태를 DISAPPEARED로 설정
+    const actualShift = subsequentEntries.length;
+    const targetNewPosition = positions[positions.length - 1];
     const updated = await tx.queueEntry.update({
       where: { id: queueEntryId },
       data: {
@@ -422,54 +336,7 @@ router.post("/queue-entries/:id/disappear", async (req, res) => {
   });
 
   // 대기 시간 실시간 재계산
-  const now = new Date();
-  const [doctor, remainingWaitingEntries, inProgress] = await Promise.all([
-    prisma.doctor.findUnique({
-      where: { id: doctorId },
-      include: {
-        serviceTimeStats: { where: { serviceType: { in: ["FIRST_VISIT", "FOLLOW_UP"] } } },
-      },
-    }),
-    prisma.queueEntry.findMany({
-      where: {
-        status: { in: [...ACTIVE_WAITING_STATUSES] },
-        appointment: { doctorId },
-      },
-      include: { appointment: true },
-      orderBy: [{ queuePosition: "asc" }, { checkedInAt: "asc" }],
-    }),
-    prisma.queueEntry.findFirst({
-      where: { status: "IN_PROGRESS", appointment: { doctorId } },
-      orderBy: { startedAt: "desc" },
-    }),
-  ]);
-
-  const firstVisitTime = Number(
-    doctor?.serviceTimeStats.find((stat) => stat.serviceType === "FIRST_VISIT")?.ewmaMinutes ?? 12,
-  );
-  const revisitTime = Number(
-    doctor?.serviceTimeStats.find((stat) => stat.serviceType === "FOLLOW_UP")?.ewmaMinutes ?? 8,
-  );
-  const ewmaMinutes = (firstVisitTime + revisitTime) / 2;
-  const previousFinish = inProgress?.startedAt
-    ? new Date(Math.max(now.getTime(), inProgress.startedAt.getTime() + ewmaMinutes * 60_000))
-    : now;
-
-  const patientIds = remainingWaitingEntries.map((e) => e.appointment.patientId);
-  const firstVisitMap = await getFirstVisitMap(patientIds, doctorId);
-
-  const recalculatedQueue = calculateQueueWaitTimes(
-    remainingWaitingEntries.map((entry) => ({
-      ticketId: Number(entry.id),
-      appointmentTime: entry.appointment.scheduledAt,
-      isFirstVisit: firstVisitMap.get(entry.appointment.patientId.toString()) ?? false,
-    })),
-    ewmaMinutes,
-    previousFinish,
-    10,
-    firstVisitTime,
-    revisitTime,
-  );
+  const recalculatedQueue = (await estimateDoctorQueue(doctorId)).map(({ estimate }) => estimate);
 
   res.json({
     data: {

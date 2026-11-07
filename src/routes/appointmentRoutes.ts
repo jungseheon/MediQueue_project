@@ -4,8 +4,13 @@ import { prisma } from "../prisma";
 import { ApiError } from "../errors/apiError";
 import { parseBody, parseDate, parseId, parseStatus } from "../utils/parsers";
 import { processNoShows } from "../services/noShowProcessor";
+import { lockDoctorQueue } from "../services/queueEstimator";
+import { getKstDayRange, isSameKstDay } from "../utils/time";
 
 const router = Router();
+
+// 예약을 취소하거나 예약 정보(의사·환자·일시)를 바꿀 수 있는 대기 상태 (아직 체크인 전)
+const NOT_CHECKED_IN_STATUSES: QueueStatus[] = ["BOOKED", "CANCELLED", "NO_SHOW"];
 
 type AppointmentRecord = Appointment & {
   doctor: { id: bigint; displayName: string; department: string };
@@ -66,6 +71,7 @@ router.get("/", async (req, res) => {
 // GET /api/appointments/:id
 router.get("/:id", async (req, res) => {
   const id = parseId(req.params.id, "id");
+  await processNoShows();
   const appointment = await prisma.appointment.findUnique({
     where: { id },
     include: appointmentInclude,
@@ -122,17 +128,40 @@ router.patch("/:id", async (req, res) => {
     if (data.status === "BOOKED" && current.status === "CANCELLED") {
       throw new ApiError(409, "A cancelled appointment cannot be reactivated");
     }
+
+    const changesDetails =
+      data.doctorId !== undefined || data.patientId !== undefined || data.scheduledAt !== undefined;
+    if (changesDetails && current.status === "CANCELLED") {
+      throw new ApiError(409, "A cancelled appointment cannot be modified");
+    }
+    // 체크인 이후(대기·진료 중·완료)에는 의사·환자·일시를 바꾸면 대기열이 어긋나므로 막는다
+    if (
+      (changesDetails || data.status === "CANCELLED") &&
+      current.queueEntry &&
+      !NOT_CHECKED_IN_STATUSES.includes(current.queueEntry.status)
+    ) {
+      throw new ApiError(
+        409,
+        data.status === "CANCELLED"
+          ? "An appointment with an active queue entry cannot be cancelled"
+          : "An appointment with an active queue entry cannot be modified",
+      );
+    }
+
     if (data.status === "CANCELLED" && current.queueEntry) {
-      const cancellableStatuses: QueueStatus[] = ["BOOKED", "CANCELLED", "NO_SHOW"];
-      if (!cancellableStatuses.includes(current.queueEntry.status)) {
-        throw new ApiError(409, "An appointment with an active queue entry cannot be cancelled");
-      }
       if (current.queueEntry.status !== "CANCELLED") {
         await transaction.queueEntry.update({
           where: { appointmentId: id },
           data: { status: "CANCELLED" },
         });
       }
+    } else if (changesDetails && current.queueEntry?.status === "NO_SHOW") {
+      // 노쇼된 예약을 다시 잡으면 대기표를 예약 상태로 되돌린다.
+      // 새 예약 시각도 이미 지났다면 노쇼 처리기가 다시 no_show로 바꾼다.
+      await transaction.queueEntry.update({
+        where: { appointmentId: id },
+        data: { status: "BOOKED", queuePosition: 0 },
+      });
     }
 
     return transaction.appointment.update({
@@ -156,8 +185,7 @@ router.delete("/:id", async (req, res) => {
     if (!current) throw new ApiError(404, "Appointment not found");
 
     if (current.queueEntry) {
-      const cancellableStatuses: QueueStatus[] = ["BOOKED", "CANCELLED", "NO_SHOW"];
-      if (!cancellableStatuses.includes(current.queueEntry.status)) {
+      if (!NOT_CHECKED_IN_STATUSES.includes(current.queueEntry.status)) {
         throw new ApiError(409, "An appointment with an active queue entry cannot be cancelled");
       }
       if (current.queueEntry.status !== "CANCELLED") {
@@ -184,7 +212,13 @@ router.post("/:id/check-in", async (req, res) => {
   const now = new Date();
   await processNoShows(now);
 
+  const found = await prisma.appointment.findUnique({ where: { id } });
+  if (!found) throw new ApiError(404, "Appointment not found");
+
   const result = await prisma.$transaction(async (tx) => {
+    // 같은 의사에게 동시에 체크인해도 순번이 겹치지 않도록 잠금
+    await lockDoctorQueue(tx, found.doctorId);
+
     // 1. 예약 정보 확인
     const appointment = await tx.appointment.findUnique({
       where: { id },
@@ -202,6 +236,13 @@ router.post("/:id/check-in", async (req, res) => {
     if (appointment.status === "CANCELLED") {
       throw new ApiError(409, "Cannot check in a cancelled appointment");
     }
+    if (appointment.doctorId !== found.doctorId) {
+      throw new ApiError(409, "Appointment was modified during check-in. Please retry");
+    }
+    // 오늘(KST) 예약만 체크인할 수 있다. 다른 날 예약이 오늘 대기열에 들어가는 것을 막는다.
+    if (!isSameKstDay(appointment.scheduledAt, now)) {
+      throw new ApiError(409, "Only today's appointments can be checked in");
+    }
 
     // 이미 체크인 진행 중이거나 완료된 경우 중복 체크인 방지
     if (appointment.queueEntry) {
@@ -217,16 +258,15 @@ router.post("/:id/check-in", async (req, res) => {
       }
     }
 
-    // 2. 당일 해당 의사의 최대 queuePosition 조회 후 +1 순번 부여 (1부터 시작)
-    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    // 2. 당일(KST) 해당 의사의 최대 queuePosition 조회 후 +1 순번 부여 (1부터 시작)
+    const { start: dayStart, end: dayEnd } = getKstDayRange(now);
 
     const maxEntry = await tx.queueEntry.findFirst({
       where: {
         appointment: { doctorId: appointment.doctorId },
         checkedInAt: {
           gte: dayStart,
-          lte: dayEnd,
+          lt: dayEnd,
         },
       },
       orderBy: { queuePosition: "desc" },

@@ -83,9 +83,20 @@ docker exec -i mediqueue-db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB' < dum
 npx prisma generate
 ~~~
 
-`npx prisma migrate status`가 "Database schema is up to date!"를 출력하면 정상이다. 변경 내용은 아래 [DB 변경 이력](#db-변경-이력)을 참고한다.
+`npx prisma migrate status`가 "Database schema is up to date!"를 출력하면 정상이다. 변경 내용은 아래 [변경 이력](#변경-이력)을 참고한다.
 
-## DB 변경 이력
+## 변경 이력
+
+### 2026-11-08 API 오류 수정
+- **잘못된 요청이 500으로 응답되던 문제**: 형식이 잘못된 JSON 본문, BIGINT 범위를 넘는 ID, 숫자가 아닌 `delayPositions`가 이제 `400`을 반환한다.
+- **부재 처리 순번 계산 오류**: 순번이 연속되지 않을 때(중간 환자 완료·부재 등) 대상 환자가 오히려 앞으로 가거나 순번이 겹치던 문제를 고쳤다. 뒤 환자들이 각각 앞사람 순번을 받고, 대상 환자는 마지막으로 앞지른 환자의 순번을 받는다.
+- **진료 상태 전이 검사**: 체크인 상태에서 바로 `completed`로 바꾸거나 같은 항목을 두 번 완료하면 대기시간·노쇼 시간이 진료시간으로 EWMA에 반영되던 문제를 막았다. `in_progress`는 `checked_in`/`disappeared`에서만, `completed`는 `in_progress`에서만 가능하며, 의사당 진료 중 환자는 한 명이다.
+- **동시 요청 처리**: 같은 의사에게 동시에 체크인하면 같은 순번이 발급될 수 있던 문제를 의사별 DB 잠금(`pg_advisory_xact_lock`)으로 막았다. 상태 변경·부재 처리도 같은 잠금을 쓰고, EWMA 갱신을 같은 트랜잭션에서 처리한다.
+- **체크인 날짜 기준**: 당일 순번을 서버 시간대가 아닌 한국 시간 기준으로 계산하고, 오늘이 아닌 예약의 체크인을 막았다.
+- **예약 수정 제한**: 체크인 이후 또는 취소된 예약의 의사·환자·일시 변경을 막았다. `no_show` 예약을 변경하면 다시 체크인할 수 있도록 대기 항목을 `booked`로 되돌린다.
+- **예상시간 계산 통합**: 같은 계산이 세 곳(대기열 조회, 진료 완료, 부재 처리)에 따로 있던 것을 `src/services/queueEstimator.ts`로 합쳤다. 진료 중 환자의 예상 종료 시각은 그 환자의 초진·재진 시간으로 계산한다.
+- 예약 상세 조회도 다른 예약 조회처럼 노쇼 처리를 먼저 실행한다.
+
 
 ### 2026-11-08 DB 구조 정리
 - **migration 통합**: 순서가 꼬이고(baseline이 나중에 적용됨) 저장소에 없는 migration이 기록된 이력을 정리하여 `prisma/migrations/20261108000000_init` 하나로 합쳤다.
@@ -220,7 +231,7 @@ git push origin feat/기능이름
   - `patientId` (string | number): 환자 ID
   - `scheduledAt` (ISO 8601 string): 예약 일시
   - `status`: `booked` 또는 `cancelled`
-  - 변경 필드가 없으면 `400`, 없는 예약 ID면 `404`입니다. 취소된 예약을 다시 `booked`로 되돌릴 수 없습니다. 대기 상태인 항목이 이미 활성화된 예약은 취소할 수 없으며 `409`를 반환합니다.
+  - 변경 필드가 없으면 `400`, 없는 예약 ID면 `404`입니다. 취소된 예약을 다시 `booked`로 되돌릴 수 없습니다. 대기 상태인 항목이 이미 활성화된 예약은 취소할 수 없으며 `409`를 반환합니다. 체크인 이후이거나 취소된 예약은 의사·환자·일시를 바꿀 수 없고(`409`), `no_show`된 예약은 일시 등을 바꾸면 다시 체크인할 수 있습니다.
   ```sh
   curl -i -X PATCH http://localhost:3000/api/appointments/1 \
     -H 'Content-Type: application/json' \
@@ -242,7 +253,8 @@ git push origin feat/기능이름
   - **예약 시간 초과 검증**: 예약 시각(`scheduledAt`) 5분 후까지 체크인하지 않으면 대기열 상태가 자동으로 **`no_show`**로 변경되고 체크인이 차단됩니다(`409 Conflict`). 예약 상태는 `booked`로 유지됩니다.
   - 정시 도착 체크인 시, 해당 진료실(의사)의 당일 체크인 이력을 확인하여 **당일 순번(`queuePosition`)을 1, 2, 3... 순서대로 부여**합니다.
   - 대기열(`queue_entries`)에 상태를 `checked_in`으로 등록하고 도착 시각(`checkedInAt`)을 기록합니다.
-  - 체크인 가능 시각은 예약 시각까지입니다. 예약 시각 이후 5분이 지나 자동 `no_show`로 처리된 뒤에는 체크인할 수 없습니다.
+  - 체크인은 예약 시각 5분 후까지 가능합니다. 그 뒤 자동 `no_show`로 처리되면 체크인할 수 없습니다.
+  - 예약일이 오늘(한국 시간 기준)인 예약만 체크인할 수 있습니다. 순번은 한국 시간 0시 기준으로 매일 1번부터 시작하며, 동시에 체크인해도 순번이 겹치지 않습니다.
 - **요청 예시**:
   ```sh
   curl -i -X POST http://localhost:3000/api/appointments/1/check-in
@@ -282,7 +294,7 @@ git push origin feat/기능이름
   - 특정 의사의 현재 대기열(`checked_in`, `disappeared`)을 조회합니다.
   - 현재 진료 중인 환자(`in_progress`)의 시작 시각 및 초진·재진별 EWMA 평균 진료 시간을 반영하여 **각 대기 환자의 예상 시작 시각(`estimatedStartTime`), 남은 대기 시간(`estimatedWaitMinutes`), 지연 시간(`delayMinutes`)**을 반환합니다.
   - 조회 시 전역 예약 노쇼 처리를 먼저 실행합니다. 대기 목록에는 `checked_in`, `disappeared` 상태가 포함되며, 진료 중 환자는 대기 목록과 별도로 예상 시간 계산에 반영됩니다.
-  - 의사 ID가 없으면 `404`를 반환합니다. 진료시간 통계가 없으면 초진 12분, 재진 8분 기본값을 사용합니다.
+  - 의사 ID가 없으면 `404`를 반환합니다. 진료시간 통계가 없으면 초진 12분, 재진 8분 기본값을 사용합니다. 진료 중 환자는 그 환자의 초진·재진 예상시간을 기준으로 끝나는 시각을 계산합니다.
 - **요청 예시**:
   ```sh
   curl -i http://localhost:3000/api/doctors/1/queue
@@ -321,7 +333,7 @@ git push origin feat/기능이름
   ```
 - **설명**: 
   - 대기 항목의 상태를 다음 중 하나로 지정합니다: `booked`, `checked_in`, `cancelled`, `disappeared`, `in_progress`, `completed`, `no_show`.
-  - 이 API는 요청한 상태를 직접 저장하며, 상태 간 전이 순서를 검증하지 않습니다. 보통 호출 시 부재는 `/disappear`, 자리 복귀는 `/return`을 사용합니다.
+  - 이 API는 요청한 상태를 직접 저장합니다. 단, `in_progress`는 `checked_in`·`disappeared` 상태에서만, `completed`는 `in_progress` 상태에서만 바꿀 수 있고(`409`), 한 의사에게 `in_progress` 환자는 한 명만 있을 수 있습니다. 보통 호출 시 부재는 `/disappear`, 자리 복귀는 `/return`을 사용합니다.
   - **`in_progress` (진료 시작)**: 진료 시작 시각(`startedAt`)을 기록합니다.
   - **`completed` (진료 완료)**: 
     1. 완료 시각을 기록하고, 시작 시각부터 실제 소요 시간을 계산합니다.
@@ -377,7 +389,7 @@ git push origin feat/기능이름
   ```
 - **설명**: 
   - `called_at`이 기록된 `checked_in` 또는 `disappeared` 항목만 처리할 수 있습니다. 호출하지 않은 환자는 `409`입니다.
-  - `delayPositions`는 뒤로 미룰 칸 수이며 기본값은 2, 유효 범위는 1~10입니다. 뒤에 대기 환자가 없으면 순번을 유지합니다.
+  - `delayPositions`는 뒤로 미룰 칸 수이며 기본값은 2, 1~10 사이의 정수여야 합니다(그 외 `400`). 뒤에 대기 환자가 없으면 순번을 유지합니다.
   - 항목 상태를 `disappeared`로 바꾸고 사이에 있던 환자를 앞으로 당깁니다. 응답에 처리 결과와 남은 대기시간 재계산 결과가 포함됩니다.
   - 현재 구현은 부재 횟수를 저장하거나 일정 횟수 후 자동으로 `no_show`로 바꾸지 않습니다.
 - **요청 예시 (순번 2칸 뒤로 미루기)**:
@@ -411,7 +423,7 @@ git push origin feat/기능이름
 - **상태 코드**:
   - `200 OK`: 요청 성공
   - `201 Created`: 자원 생성 성공 (예약 생성 등)
-  - `400 Bad Request`: 필수 필드 누락, 유효하지 않은 날짜/ID 형식, 허용되지 않은 상태 값 전달
+  - `400 Bad Request`: 필수 필드 누락, 유효하지 않은 날짜/ID 형식, 허용되지 않은 상태 값 전달, JSON 형식 오류
   - `404 Not Found`: 대상 예약, 의사, 대기열 항목이 존재하지 않음
   - `409 Conflict`: 이미 체크인된 예약, 취소된 예약에 대한 작업, 활성 대기열이 있는 예약 취소 시도 등 비즈니스 충돌
   - `500 Internal Server Error`: 서버 내부 오류

@@ -34,6 +34,19 @@ const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
     return;
   }
 
+  // express.json()이 던지는 본문 파싱 오류(잘못된 JSON, 너무 큰 본문 등)
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "type" in error &&
+    typeof error.status === "number" &&
+    error.status >= 400 &&
+    error.status < 500
+  ) {
+    res.status(error.status).json({ error: "Invalid request body" });
+    return;
+  }
+
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2003") {
       res.status(400).json({ error: "doctorId or patientId does not exist" });

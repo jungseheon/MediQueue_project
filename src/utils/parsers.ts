@@ -1,13 +1,16 @@
 import { AppointmentStatus, QueueStatus } from "@prisma/client";
 import { ApiError } from "../errors/apiError";
 
+const MAX_BIGINT = 9223372036854775807n;
+
 export function parseId(value: unknown, field: string): bigint {
   const text =
     typeof value === "number" && Number.isSafeInteger(value)
       ? String(value)
       : value;
 
-  if (typeof text !== "string" || !/^[1-9]\d*$/.test(text)) {
+  // PostgreSQL BIGINT 최댓값을 넘는 ID는 DB 오류(500) 대신 400으로 처리
+  if (typeof text !== "string" || !/^[1-9]\d*$/.test(text) || BigInt(text) > MAX_BIGINT) {
     throw new ApiError(400, `${field} must be a positive integer`);
   }
 
@@ -58,6 +61,15 @@ export function parseQueueStatus(value: unknown): QueueStatus {
     400,
     `status must be one of: ${VALID_QUEUE_STATUSES.map((s) => s.toLowerCase()).join(", ")}`,
   );
+}
+
+// 정수 문자열 또는 안전한 정수를 받아 [min, max] 범위의 정수로 검증
+export function parseIntInRange(value: unknown, field: string, min: number, max: number): number {
+  const number = typeof value === "string" && /^-?\d+$/.test(value) ? Number(value) : value;
+  if (typeof number !== "number" || !Number.isInteger(number) || number < min || number > max) {
+    throw new ApiError(400, `${field} must be an integer between ${min} and ${max}`);
+  }
+  return number;
 }
 
 export function parseBody(value: unknown): Record<string, unknown> {
