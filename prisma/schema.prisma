@@ -66,6 +66,7 @@ model QueueEntry {
   calledAt      DateTime?   @map("called_at") @db.Timestamptz //진료실 호출 시각 (호출 상태는 따로 두지 않음)
   startedAt     DateTime?   @map("started_at") @db.Timestamptz //진료실 입장/진료 시작 시각
   completedAt   DateTime?   @map("completed_at") @db.Timestamptz //진료 완료 시각
+  disappearCount Int        @default(0) @map("disappear_count") //부재 처리 횟수 (2회 초과 시 no_show 전환)
 
   // 관계 설정 (예약 1:1 관계)
   appointment Appointment @relation(fields: [appointmentId], references: [id])

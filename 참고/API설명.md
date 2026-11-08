@@ -318,13 +318,15 @@ curl -i -X POST http://localhost:3000/api/queue-entries/1/call
 
 `delayPositions`의 기본값은 2이며 1~10 사이의 정수여야 합니다(그 외 값은 `400 Bad Request`). 대상 항목은 `disappeared`가 되고, 바로 뒤의 대기 환자 `delayPositions`명이 각각 앞사람의 순번을 받아 한 칸씩 앞으로 이동하며, 대상 환자는 마지막으로 앞지른 환자의 순번을 받습니다. 뒤 환자가 `delayPositions`명보다 적으면 있는 만큼만 미룹니다. 뒤에 대기 환자가 없으면 현재 순번을 유지합니다. 응답에는 처리 결과와 남은 대기열의 예상시간 재계산 결과가 포함됩니다.
 
+**부재 횟수 제한**: `queue_entries.disappear_count` 컬럼에 누적 횟수를 저장합니다. 부재를 2회까지는 `disappeared`로 처리하여 순번을 뒤로 미룹니다. 3회째 부재 처리 시 순번 조정 없이 즉시 `no_show`로 전환됩니다. 응답 `updatedEntry`에 `disappearCount`가 포함됩니다.
+
 ```sh
 curl -i -X POST http://localhost:3000/api/queue-entries/1/disappear \
   -H 'Content-Type: application/json' \
   --data '{"delayPositions":2}'
 ```
 
-호출 기록이 없거나 상태가 허용되지 않으면 `409 Conflict`, 대기 항목을 찾지 못하면 `404 Not Found`입니다. 현재 구현은 부재 횟수를 저장하지 않으며, 부재 횟수에 따라 자동 `no_show` 처리하지 않습니다.
+호출 기록이 없거나 상태가 허용되지 않으면 `409 Conflict`, 대기 항목을 찾지 못하면 `404 Not Found`입니다.
 
 ### 3.12 부재 환자 대기열 복귀
 

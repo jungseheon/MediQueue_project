@@ -272,6 +272,27 @@ router.post("/queue-entries/:id/disappear", async (req, res) => {
       );
     }
 
+    const newDisappearCount = targetEntry.disappearCount + 1;
+
+    // 부재 2회 초과 시 no_show로 전환
+    if (newDisappearCount > 2) {
+      const updated = await tx.queueEntry.update({
+        where: { id: queueEntryId },
+        data: { status: "NO_SHOW", disappearCount: newDisappearCount },
+      });
+
+      return {
+        message: `${patientName} 환자가 부재 ${newDisappearCount}회로 'no_show' 처리되었습니다.`,
+        updatedEntry: {
+          id: updated.id.toString(),
+          appointmentId: updated.appointmentId.toString(),
+          queuePosition: updated.queuePosition,
+          status: updated.status.toLowerCase(),
+          disappearCount: updated.disappearCount,
+        },
+      };
+    }
+
     // 현재 환자 바로 뒤에 대기 중인 환자들 (최대 delayPositions명, 순서대로)
     const subsequentEntries = await tx.queueEntry.findMany({
       where: {
@@ -287,16 +308,17 @@ router.post("/queue-entries/:id/disappear", async (req, res) => {
       // 뒤에 대기 환자가 없으면 순번 유지, 상태만 DISAPPEARED로 변경
       const updated = await tx.queueEntry.update({
         where: { id: queueEntryId },
-        data: { status: "DISAPPEARED" },
+        data: { status: "DISAPPEARED", disappearCount: newDisappearCount },
       });
 
       return {
-        message: `${patientName} 환자가 부재중으로 'disappeared'(자리비움) 처리되었습니다. 대기열의 마지막 순번이므로 순번(${targetEntry.queuePosition}번)은 유지됩니다.`,
+        message: `${patientName} 환자가 부재중으로 'disappeared'(자리비움) 처리되었습니다 (${newDisappearCount}/2회). 대기열의 마지막 순번이므로 순번(${targetEntry.queuePosition}번)은 유지됩니다.`,
         updatedEntry: {
           id: updated.id.toString(),
           appointmentId: updated.appointmentId.toString(),
           queuePosition: updated.queuePosition,
           status: updated.status.toLowerCase(),
+          disappearCount: updated.disappearCount,
         },
       };
     }
@@ -321,16 +343,18 @@ router.post("/queue-entries/:id/disappear", async (req, res) => {
       data: {
         queuePosition: targetNewPosition,
         status: "DISAPPEARED",
+        disappearCount: newDisappearCount,
       },
     });
 
     return {
-      message: `${patientName} 환자가 호출 시 부재중으로 'disappeared'(자리비움) 처리되었으며, 순번이 ${actualShift}칸 뒤로 연기되었습니다. (기존: ${targetEntry.queuePosition}번 -> 변경: ${targetNewPosition}번)`,
+      message: `${patientName} 환자가 호출 시 부재중으로 'disappeared'(자리비움) 처리되었으며 (${newDisappearCount}/2회), 순번이 ${actualShift}칸 뒤로 연기되었습니다. (기존: ${targetEntry.queuePosition}번 -> 변경: ${targetNewPosition}번)`,
       updatedEntry: {
         id: updated.id.toString(),
         appointmentId: updated.appointmentId.toString(),
         queuePosition: updated.queuePosition,
         status: updated.status.toLowerCase(),
+        disappearCount: updated.disappearCount,
       },
     };
   });

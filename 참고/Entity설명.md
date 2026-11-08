@@ -67,6 +67,8 @@ Attribute(저장해야할 Data type)
 - completed_at(TIMESTAMPTZ)
     진료 완료 시간
     checked_in_at, called_at, started_at, completed_at은 각 단계의 시각이며, 아직 발생하지 않은 단계는 NULL
+- disappear_count(INTEGER, 기본값 0)
+    부재 처리 횟수. 2회까지는 disappeared 상태로 순번을 뒤로 미루고, 3회째에 no_show로 전환된다.
 
 ### 5. service_time_stats
 - ***doctor_id(BIGINT)***
