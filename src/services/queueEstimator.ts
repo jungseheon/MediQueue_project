@@ -13,10 +13,12 @@ type Db = Prisma.TransactionClient | typeof prisma;
 
 /**
  * 같은 의사의 대기열을 바꾸는 요청(체크인, 상태 변경, 부재 처리 등)을 트랜잭션 안에서 직렬화한다.
- * 동시에 체크인할 때 같은 순번이 발급되거나, 두 환자가 동시에 진료 중이 되는 것을 막는다.
+ * doctors 행에 FOR UPDATE 행 잠금을 걸어 같은 doctorId를 가진 트랜잭션이 동시에 진행되지 않도록 한다.
+ * pg_advisory_xact_lock 대신 행 잠금을 쓰는 이유: Prisma의 $executeRaw에서 BigInt 타입 캐스팅이
+ * 드라이버 버전에 따라 불안정할 수 있으므로, Prisma ORM이 타입을 보장하는 WHERE 절을 활용한다.
  */
 export async function lockDoctorQueue(tx: Prisma.TransactionClient, doctorId: bigint) {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${doctorId})`;
+  await tx.$queryRaw`SELECT id FROM doctors WHERE id = ${doctorId} FOR UPDATE`;
 }
 
 export async function getVisitDurations(doctorId: bigint, db: Db = prisma) {
