@@ -18,9 +18,9 @@ generator client {
 
 // 의사 및 진료실 모델
 model Doctor {
-  id          BigInt   @id @default(autoincrement()) 
-  displayName String   @map("display_name") // 의사 이름?
-  department  String //진료과 (예: 정신과 2진료실)
+  id          BigInt @id @default(autoincrement())
+  displayName String @map("display_name") // 의사 이름
+  department  String // 진료과 (예: 내과, 정형외과, 소아청소년과 등)
 
   // 관계 설정
   appointments     Appointment[]
@@ -31,15 +31,14 @@ model Doctor {
 
 // 환자 모델
 model Patient {
-  id          BigInt   @id @default(autoincrement())
-  displayName String   @map("display_name") // 환자 이름
+  id          BigInt @id @default(autoincrement())
+  displayName String @map("display_name") // 환자 이름
 
   // 관계 설정
   appointments Appointment[]
 
   @@map("patients")
 }
-
 
 // 예약 및 대기열 모델
 model Appointment {
@@ -64,8 +63,10 @@ model QueueEntry {
   queuePosition Int         @map("queue_position") //현재 대기실에서의 순번
   status        QueueStatus
   checkedInAt   DateTime?   @map("checked_in_at") @db.Timestamptz //현장 도착 접수 시각
+  calledAt      DateTime?   @map("called_at") @db.Timestamptz //진료실 호출 시각 (호출 상태는 따로 두지 않음)
   startedAt     DateTime?   @map("started_at") @db.Timestamptz //진료실 입장/진료 시작 시각
   completedAt   DateTime?   @map("completed_at") @db.Timestamptz //진료 완료 시각
+  disappearCount Int        @default(0) @map("disappear_count") //부재 처리 횟수 (2회 초과 시 no_show 전환)
 
   // 관계 설정 (예약 1:1 관계)
   appointment Appointment @relation(fields: [appointmentId], references: [id])
@@ -75,11 +76,11 @@ model QueueEntry {
 
 // EWMA 대기시간 통계 모델
 model ServiceTimeStat {
-  doctorId    BigInt   @map("doctor_id")
-  serviceType String   @map("service_type")
-  ewmaMinutes Decimal  @map("ewma_minutes") @db.Decimal(6, 2) //예측 진료시간(소수점 2자리, 고정밀도.)
-  sampleCount Int      @default(0) @map("sample_count") //누적 진료 환자 수
-  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz //최종 갱신 시각
+  doctorId    BigInt      @map("doctor_id")
+  serviceType ServiceType @map("service_type")
+  ewmaMinutes Decimal     @map("ewma_minutes") @db.Decimal(6, 2) //예측 진료시간(소수점 2자리, 고정밀도.)
+  sampleCount Int         @default(0) @map("sample_count") //누적 진료 환자 수
+  updatedAt   DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz //최종 갱신 시각
 
   // 관계 설정
   doctor Doctor @relation(fields: [doctorId], references: [id])
@@ -89,7 +90,6 @@ model ServiceTimeStat {
   @@map("service_time_stats")
 }
 
-
 // Enum (상태 정의)
 enum AppointmentStatus {
   BOOKED    @map("booked") //예약 확정
@@ -97,11 +97,17 @@ enum AppointmentStatus {
 }
 
 enum QueueStatus {
-  BOOKED        @map("booked") //예약 등록 (미도착)
-  CHECKED_IN    @map("checked_in") //현장 접수 환료 (대기 중)
-  CALLED        @map("called") //진료실 호출
-  IN_PROGRESS   @map("in_progress") //진료 중
-  COMPLETED     @map("completed") //진료 완료
-  NO_SHOW       @map("no_show") //부재/노쇼 처리
-  CANCELLED     @map("cancelled") //당일 접수 취소
+  BOOKED      @map("booked") //예약 등록 (미도착)
+  CHECKED_IN  @map("checked_in") //현장 접수 완료 (대기 중)
+  CANCELLED   @map("cancelled") //예약 또는 당일 접수 취소
+  DISAPPEARED @map("disappeared") //호출 후 부재
+  IN_PROGRESS @map("in_progress") //진료 중
+  COMPLETED   @map("completed") //진료 완료
+  NO_SHOW     @map("no_show") //예약 시각 5분 후까지 미방문
+}
+
+enum ServiceType {
+  FIRST_VISIT @map("초진")
+  FOLLOW_UP   @map("재진")
+  EXAM        @map("검사")
 }
