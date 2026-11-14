@@ -13,6 +13,7 @@ import {
 import { ApiError } from "../errors/apiError";
 import { parseBody, parseId, parseIntInRange, parseQueueStatus } from "../utils/parsers";
 import { processNoShows } from "../services/noShowProcessor";
+import { sseService } from "../services/sseService";
 
 const router = Router();
 
@@ -58,6 +59,23 @@ router.get("/doctors/:doctorId/queue", async (req, res) => {
         delayMinutes: estimate.delayMinutes,
       })),
     },
+  });
+});
+
+// GET /api/doctors/:doctorId/stream (실시간 대기열 SSE 구독)
+router.get("/doctors/:doctorId/stream", (req, res) => {
+  const doctorId = parseId(req.params.doctorId, "doctorId").toString();
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  res.write(`data: ${JSON.stringify({ type: "CONNECTED", doctorId })}\n\n`);
+  sseService.addClient(doctorId, res);
+
+  req.on("close", () => {
+    sseService.removeClient(doctorId, res);
   });
 });
 
@@ -140,7 +158,12 @@ router.patch("/queue-entries/:id/status", async (req, res) => {
           ? DEFAULT_FIRST_VISIT_MINUTES
           : DEFAULT_FOLLOW_UP_MINUTES;
 
-      ewma = calculateEWMA(currentEWMA, actualDurationMinutes, 0.3);
+      const config = await tx.algorithmConfig.findUnique({
+        where: { doctorId },
+      });
+      const alpha = config ? Number(config.alpha) : 0.3;
+
+      ewma = calculateEWMA(currentEWMA, actualDurationMinutes, alpha);
 
       await tx.serviceTimeStat.upsert({
         where: { doctorId_serviceType: { doctorId, serviceType } },
@@ -165,6 +188,19 @@ router.patch("/queue-entries/:id/status", async (req, res) => {
     status === "COMPLETED"
       ? (await estimateDoctorQueue(doctorId, now)).map(({ estimate }) => estimate)
       : [];
+  const configForAlert = await prisma.algorithmConfig.findUnique({ where: { doctorId }});
+  const threshold = configForAlert?.delayThreshold ?? 10;
+
+  const alertTargets = recalculatedQueue.filter(
+    (estimate) => estimate.delayMinutes >= threshold
+  );
+
+  sseService.broadcastQueueUpdate(doctorId.toString(), {
+    type: "QUEUE_UPDATED",
+    updatedEWMA: newEWMA,
+    recalculatedQueue,
+    alertTargets,
+  });
 
   res.json({
     data: {
