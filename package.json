@@ -4,6 +4,8 @@
   "description": "숭실대 오픈소스기반기초설계 7조",
   "main": "index.js",
   "scripts": {
+    "dev:patient": "node frontend/server.mjs",
+    "test:patient": "node --test frontend/tests/*.test.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
