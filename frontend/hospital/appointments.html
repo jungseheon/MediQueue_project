@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>예약 및 환자 관리 - MediQueue</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- PC 사이드바 -->
+  <nav class="sidebar">
+    <div class="logo">MediQueue</div>
+    <div class="logo-sub">병원 관리자 · 의료진</div>
+    <a href="dashboard.html">진료실 대기열 대시보드</a>
+    <a href="appointments.html" class="active">예약 및 환자 관리</a>
+    <a href="#">예측 알고리즘 설정</a>
+    <div class="footer">원무과 관리자 · 로그아웃</div>
+  </nav>
+
+  <main class="main">
+    <div class="page-head">
+      <h1>예약 및 환자 관리</h1>
+    </div>
+
+    <!-- PC 필터 -->
+    <section class="card filters">
+      <div class="field">
+        <label>조회 기간</label>
+        <input type="date" id="fDate" />
+      </div>
+      <div class="tabs" id="rangeTabs">
+        <button class="btn active" data-range="day">당일</button>
+        <button class="btn" data-range="week">주간</button>
+        <button class="btn" data-range="month">월간</button>
+      </div>
+      <div class="field"><label>진료과</label><select id="fDept"></select></div>
+      <div class="field"><label>담당의</label><select id="fDoctor"></select></div>
+      <div class="field">
+        <label>상태</label>
+        <select id="fStatus">
+          <option value="all">전체</option>
+          <option value="waiting">대기</option>
+          <option value="in_progress">진료 중</option>
+          <option value="completed">진료 완료</option>
+          <option value="cancelled">취소 · 부재</option>
+        </select>
+      </div>
+      <div class="field grow"><label>환자 검색</label><input type="text" id="fSearch" placeholder="이름, 예약번호" /></div>
+    </section>
+
+    <!-- 모바일 필터 -->
+    <div class="week-strip" id="weekStrip"></div>
+    <input type="text" class="mobile-only mobile-search" id="mSearch" placeholder="이름, 예약번호" />
+    <div class="chip-row" id="chipRow"></div>
+    <div class="mobile-selects">
+      <select id="mDept"></select>
+      <select id="mDoctor"></select>
+    </div>
+
+    <!-- 상태별 건수 (클릭 시 상태 필터) -->
+    <section class="stats five" id="statCards"></section>
+
+    <!-- 예약 목록 -->
+    <section class="card list-card">
+      <div class="list-head">
+        <h2 id="listTitle">예약 목록</h2>
+      </div>
+      <table class="pc-only">
+        <thead>
+          <tr><th>예약번호</th><th>환자명</th><th>진료과 · 담당의</th><th>예약시간</th><th>예상 시작</th><th>대기열 상태</th><th class="right">관리</th></tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div class="pager pc-only" id="pager"></div>
+      <div class="mobile-list" id="mobileList"></div>
+    </section>
+  </main>
+
+  <!-- 모바일 하단 내비게이션 -->
+  <nav class="bottom-nav">
+    <a href="dashboard.html">대기열</a>
+    <a href="appointments.html" class="active">예약 관리</a>
+    <a href="#">설정</a>
+  </nav>
+
+  <script src="js/api.js"></script>
+  <script src="js/appointments.js"></script>
+</body>
+</html>
