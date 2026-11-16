@@ -9,7 +9,6 @@
 - 예약 상태는 `booked`, `cancelled`입니다.
 - 대기열 상태는 `booked`, `checked_in`, `cancelled`, `disappeared`, `in_progress`, `completed`, `no_show`입니다. `called`는 대기열 상태가 아니며, 호출 시각을 `called_at`에 기록합니다.
 - 예약 조회 결과의 상태 문자열은 소문자로 반환됩니다.
-- 2026-11-08 변경: 진료 중 상태 문자열이 `inprogress`에서 `in_progress`로 바뀌었습니다. 요청 본문과 응답 모두 `in_progress`를 사용합니다. `inprogress`를 보내면 `400 Bad Request`입니다.
 - 일반적인 오류 응답 형식은 `{ "error": "오류 설명" }`입니다.
 
 ## 2. API 목록

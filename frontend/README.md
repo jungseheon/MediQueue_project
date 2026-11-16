@@ -31,16 +31,3 @@
 ## 검증
 
 `npm run test:patient`로 중복 예약, 마감 시간, 변경 시 자기 예약 제외, 취소 후 재예약, 과거 날짜 및 입력 검증을 확인합니다. 백엔드 테스트와 독립적으로 실행됩니다.
-
-## 팀 저장소에 반영
-
-현재 변경은 로컬에만 있으며 브랜치 생성·커밋·원격 푸시는 하지 않았습니다. 팀과 확인 후 저장소 최상위에서 아래 순서로 작업하세요.
-
-```powershell
-git switch -c feature/patient-frontend
-git add frontend package.json
-git commit -m "feat: implement patient frontend demo"
-git push -u origin feature/patient-frontend
-```
-
-GitHub에서 Compare & pull request를 눌러 팀의 기본 브랜치로 PR을 만드세요. 직접 push 권한이 없다면 본인 계정으로 Fork한 저장소에 push하고 원본 저장소로 PR을 보냅니다. PR에는 세 화면, 반응형, localStorage 시연 예약, `npm run test:patient` 결과와 백엔드 미연동 범위를 적으세요.

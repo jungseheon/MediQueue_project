@@ -1,4 +1,3 @@
-import "dotenv/config";
 import cors from "cors";
 import express, { type ErrorRequestHandler } from "express";
 import { Prisma } from "@prisma/client";

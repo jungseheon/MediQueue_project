@@ -89,5 +89,4 @@ Attribute(저장해야할 Data type)
 
 ---
 
-### 변경 이력
-- 2026-11-08: `queue_entries.status`의 `inprogress`를 `in_progress`로 변경. 이전 migration이 남긴 `service_time_stats_legacy`, `queue_entry_status_legacy` 테이블 삭제. 위 5개 테이블 외의 테이블은 없다(`_prisma_migrations` 제외).
+위 5개 테이블 외의 테이블은 없다(`_prisma_migrations` 제외).

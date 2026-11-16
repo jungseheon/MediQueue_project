@@ -2,7 +2,6 @@
   "name": "mediqueue_project",
   "version": "1.0.0",
   "description": "숭실대 오픈소스기반기초설계 7조",
-  "main": "index.js",
   "scripts": {
     "dev:patient": "node frontend/server.mjs",
     "test:patient": "node --test frontend/tests/*.test.mjs",
@@ -21,8 +20,6 @@
     "type": "git",
     "url": "git+https://github.com/jungseheon/MediQueue_project.git"
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
   "type": "commonjs",
   "bugs": {
@@ -35,10 +32,8 @@
     "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
-    "nodemon": "^3.1.14",
     "prisma": "^7.10.1",
     "supertest": "^7.3.2",
-    "ts-node": "^10.9.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
