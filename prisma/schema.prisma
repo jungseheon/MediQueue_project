@@ -25,6 +25,7 @@ model Doctor {
   // 관계 설정
   appointments     Appointment[]
   serviceTimeStats ServiceTimeStat[]
+  algorithmConfig AlgorithmConfig? 
 
   @@map("doctors")
 }
@@ -110,4 +111,22 @@ enum ServiceType {
   FIRST_VISIT @map("초진")
   FOLLOW_UP   @map("재진")
   EXAM        @map("검사")
+}
+
+model AlgorithmConfig {
+  id                BigInt   @id @default(autoincrement())
+  doctorId          BigInt   @unique @map("doctor_id")
+  firstVisitTime    Float    @default(12.0) @map("first_visit_time")    // 초진 기본시간 (분)
+  reVisitTime       Float    @default(8.0)  @map("re_visit_time")       // 재진 기본시간 (분)
+  prepTime          Float    @default(1.0)  @map("prep_time")           // 환자 간 준비시간 (분)
+  alpha             Float    @default(0.3)                              // EWMA 보정 비율 α
+  sampleCount       Int      @default(10)   @map("sample_count")        // 반영할 최근 진료 수
+  delayThreshold    Int      @default(10)   @map("delay_threshold")     // 지연 알림 기준 (분)
+  reNotifyThreshold Int      @default(5)    @map("re_notify_threshold") // 추가 지연 재알림 간격 (분)
+  imminentCount     Int      @default(2)    @map("imminent_count")      // 순서 임박 알림 기준 (명 전)
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  doctor Doctor @relation(fields: [doctorId], references: [id])
+
+  @@map("algorithm_configs")
 }

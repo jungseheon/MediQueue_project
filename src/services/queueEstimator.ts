@@ -8,6 +8,9 @@ export const ACTIVE_WAITING_STATUSES: QueueStatus[] = ["CHECKED_IN", "DISAPPEARE
 // 진료시간 통계가 없을 때 사용하는 기본값(분)
 export const DEFAULT_FIRST_VISIT_MINUTES = 12;
 export const DEFAULT_FOLLOW_UP_MINUTES = 8;
+//추가 기본값
+export const DEFAULT_PREP_MINUTES = 1;
+export const DEFAULT_DELAY_THRESHOLD = 10;
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -21,18 +24,24 @@ export async function lockDoctorQueue(tx: Prisma.TransactionClient, doctorId: bi
   await tx.$queryRaw`SELECT id FROM doctors WHERE id = ${doctorId} FOR UPDATE`;
 }
 
-export async function getVisitDurations(doctorId: bigint, db: Db = prisma) {
+//수정: 통계가 없을 때 쓸 기본값을 파라미터로 받도록 변경
+export async function getVisitDurations(
+  doctorId: bigint, 
+  db: Db = prisma, 
+  defaultFirstVisit = DEFAULT_FIRST_VISIT_MINUTES, //추가 
+  defaultFollowUp = DEFAULT_FOLLOW_UP_MINUTES, //추가
+) {
   const serviceStats = await db.serviceTimeStat.findMany({
     where: { doctorId, serviceType: { in: ["FIRST_VISIT", "FOLLOW_UP"] } },
   });
   return {
     firstVisitTime: Number(
       serviceStats.find((stat) => stat.serviceType === "FIRST_VISIT")?.ewmaMinutes ??
-        DEFAULT_FIRST_VISIT_MINUTES,
+        defaultFirstVisit, //수정
     ),
     revisitTime: Number(
       serviceStats.find((stat) => stat.serviceType === "FOLLOW_UP")?.ewmaMinutes ??
-        DEFAULT_FOLLOW_UP_MINUTES,
+        defaultFollowUp, //수정
     ),
   };
 }
@@ -79,6 +88,18 @@ export async function getFirstVisitMap(
  * 진료 중(in_progress)인 환자가 있으면 그 환자의 초진/재진 예상 시간이 끝나는 시각부터 계산한다.
  */
 export async function estimateDoctorQueue(doctorId: bigint, now = new Date()) {
+  
+  //DB에서 해당 의사의 알고리즘 설정 조회
+  const config = await prisma.algorithmConfig.findUnique({
+    where: { doctorId },
+  });
+  
+  //DB 설정값 추출 (없으면 기본값 적용)
+  const configFirstVisit = config?.firstVisitTime ?? DEFAULT_FIRST_VISIT_MINUTES;
+  const configFollowUp = config?.reVisitTime ?? DEFAULT_FOLLOW_UP_MINUTES;
+  const prepMinutes = config?.prepTime ?? DEFAULT_PREP_MINUTES;
+  const delayThreshold = config?.delayThreshold ?? DEFAULT_DELAY_THRESHOLD;
+
   const [entries, inProgress, { firstVisitTime, revisitTime }] = await Promise.all([
     prisma.queueEntry.findMany({
       where: {
@@ -93,7 +114,9 @@ export async function estimateDoctorQueue(doctorId: bigint, now = new Date()) {
       include: { appointment: true },
       orderBy: { startedAt: "desc" },
     }),
-    getVisitDurations(doctorId),
+
+    //수정: 통계 없을 때 config의 초진/재진 기본시간을 쓰도록 전달
+    getVisitDurations(doctorId, prisma, configFirstVisit, configFollowUp),
   ]);
 
   const patientIds = entries.map((entry) => entry.appointment.patientId);
@@ -111,6 +134,7 @@ export async function estimateDoctorQueue(doctorId: bigint, now = new Date()) {
     );
   }
 
+  //동적 설정값(delayThreshold, prepMinutes)까지 계산기에 모두 전달
   const estimates: CalculatedResult[] = calculateQueueWaitTimes(
     entries.map((entry) => ({
       ticketId: Number(entry.id),
@@ -119,9 +143,10 @@ export async function estimateDoctorQueue(doctorId: bigint, now = new Date()) {
     })),
     (firstVisitTime + revisitTime) / 2,
     previousFinish,
-    10,
+    delayThreshold,
     firstVisitTime,
     revisitTime,
+    prepMinutes,
   );
 
   return entries.map((entry, index) => ({

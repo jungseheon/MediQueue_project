@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>진료실 대기열 대시보드 - MediQueue</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- PC 사이드바 -->
+  <nav class="sidebar">
+    <div class="logo">MediQueue</div>
+    <div class="logo-sub">병원 관리자 · 의료진</div>
+    <a href="dashboard.html" class="active">진료실 대기열 대시보드</a>
+    <a href="appointments.html">예약 및 환자 관리</a>
+    <a href="#">예측 알고리즘 설정</a>
+    <div class="footer">의료진 · 로그아웃</div>
+  </nav>
+
+  <main class="main">
+    <div class="page-head">
+      <div>
+        <div class="sub pc-only" id="headDate">—</div>
+        <h1><span class="pc-only">진료실 대기열 대시보드</span><span class="mobile-only">진료실 대시보드</span></h1>
+      </div>
+      <div>
+        <label class="pc-only">진료실</label>
+        <select id="doctorSelect"></select>
+      </div>
+    </div>
+
+    <!-- 현재 진료 중인 환자 -->
+    <section class="card strong current">
+      <div class="top">
+        <div>
+          <div class="label">현재 진료 중인 환자</div>
+          <div class="name" id="curName">진료 중인 환자 없음</div>
+          <div class="meta" id="curMeta"></div>
+        </div>
+        <div class="elapsed">
+          <div class="label">경과 시간</div>
+          <div class="time" id="curElapsed">--:--</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnStart">진료 시작</button>
+        <button class="btn primary" id="btnComplete">진료 완료</button>
+        <button class="btn outline-strong" id="btnCall">다음 환자 호출</button>
+        <button class="btn" id="btnDelay" disabled title="백엔드 API 미구현">지연 발생</button>
+        <button class="btn" id="btnDisappear">부재 처리</button>
+      </div>
+      <div class="note">진료 완료 시 대기 환자 전체의 예상 시작시간이 자동 재계산되고, 기준 초과 시 지연 알림이 발송됩니다.</div>
+    </section>
+
+    <!-- 요약 지표 -->
+    <section class="stats">
+      <div class="card stat"><div class="label">대기 환자</div><div class="value" id="statWaiting">-</div></div>
+      <div class="card stat"><div class="label">진료 완료</div><div class="value" id="statDone">-</div></div>
+      <div class="card stat"><div class="label">현재 EWMA 진료시간</div><div class="value" id="statEwma">-</div></div>
+      <div class="card stat"><div class="label">평균 지연</div><div class="value" id="statDelay">-</div></div>
+    </section>
+
+    <!-- 대기 환자 목록 -->
+    <section class="card list-card">
+      <div class="list-head">
+        <h2 id="listTitle">실시간 대기 환자 목록</h2>
+        <div class="tabs pc-only">
+          <button class="btn sm active" data-tab="queue">실시간 대기</button>
+          <button class="btn sm" data-tab="today">오늘 전체</button>
+        </div>
+      </div>
+      <table class="pc-only">
+        <thead>
+          <tr><th>순서</th><th>환자</th><th>예약시간</th><th>예상 시작</th><th>지연 여부</th><th>도착</th><th class="right">작업</th></tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div class="mobile-list" id="mobileList"></div>
+    </section>
+  </main>
+
+  <!-- 모바일 하단 내비게이션 -->
+  <nav class="bottom-nav">
+    <a href="dashboard.html" class="active">대기열</a>
+    <a href="appointments.html">예약 관리</a>
+    <a href="#">설정</a>
+  </nav>
+
+  <script src="js/api.js"></script>
+  <script src="js/dashboard.js"></script>
+</body>
+</html>
