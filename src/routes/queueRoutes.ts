@@ -4,9 +4,8 @@ import { prisma } from "../prisma";
 import { calculateEWMA } from "../services/calculator";
 import {
   ACTIVE_WAITING_STATUSES,
-  DEFAULT_FIRST_VISIT_MINUTES,
-  DEFAULT_FOLLOW_UP_MINUTES,
   estimateDoctorQueue,
+  getAlgorithmSettings,
   getFirstVisitMap,
   lockDoctorQueue,
 } from "../services/queueEstimator";
@@ -149,21 +148,18 @@ router.patch("/queue-entries/:id/status", async (req, res) => {
         Math.round((now.getTime() - targetEntry.startedAt.getTime()) / (1000 * 60)),
       );
 
+      // 통계가 없으면 설정의 초진·재진 기본시간에서 시작한다 (대기열 예상시간 계산과 같은 기준)
+      const settings = await getAlgorithmSettings(doctorId, tx);
       const stat = await tx.serviceTimeStat.findUnique({
         where: { doctorId_serviceType: { doctorId, serviceType } },
       });
       const currentEWMA = stat
         ? Number(stat.ewmaMinutes)
         : isFirstVisit
-          ? DEFAULT_FIRST_VISIT_MINUTES
-          : DEFAULT_FOLLOW_UP_MINUTES;
+          ? settings.firstVisitTime
+          : settings.reVisitTime;
 
-      const config = await tx.algorithmConfig.findUnique({
-        where: { doctorId },
-      });
-      const alpha = config ? Number(config.alpha) : 0.3;
-
-      ewma = calculateEWMA(currentEWMA, actualDurationMinutes, alpha);
+      ewma = calculateEWMA(currentEWMA, actualDurationMinutes, settings.alpha);
 
       await tx.serviceTimeStat.upsert({
         where: { doctorId_serviceType: { doctorId, serviceType } },
@@ -188,12 +184,8 @@ router.patch("/queue-entries/:id/status", async (req, res) => {
     status === "COMPLETED"
       ? (await estimateDoctorQueue(doctorId, now)).map(({ estimate }) => estimate)
       : [];
-  const configForAlert = await prisma.algorithmConfig.findUnique({ where: { doctorId }});
-  const threshold = configForAlert?.delayThreshold ?? 10;
-
-  const alertTargets = recalculatedQueue.filter(
-    (estimate) => estimate.delayMinutes >= threshold
-  );
+  // 지연이 설정의 delayThreshold 이상인 대기자 (계산기에서 isAlertTriggered로 표시됨)
+  const alertTargets = recalculatedQueue.filter((estimate) => estimate.isAlertTriggered);
 
   sseService.broadcastQueueUpdate(doctorId.toString(), {
     type: "QUEUE_UPDATED",

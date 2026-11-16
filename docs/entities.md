@@ -87,6 +87,31 @@ Attribute(저장해야할 Data type)
 - updated_at(TIMESTAMPTZ)
     sample_count가 갱신된 시간
 
+### 6. algorithm_configs
+- **id(BIGINT)**
+    설정 고유 번호
+- *doctor_id(BIGINT, UNIQUE)*
+    의사 고유 번호
+    doctors 테이블의 id 참조, 의사당 설정 하나. 행이 없으면 아래 기본값을 사용한다
+- first_visit_time(DOUBLE PRECISION, 기본값 12.0)
+    초진 EWMA가 없을 때 쓰는 초진 진료시간(분)
+- re_visit_time(DOUBLE PRECISION, 기본값 8.0)
+    재진 EWMA가 없을 때 쓰는 재진 진료시간(분)
+- prep_time(DOUBLE PRECISION, 기본값 1.0)
+    환자 간 준비시간(분)
+- alpha(DOUBLE PRECISION, 기본값 0.3)
+    진료 완료 시 EWMA 갱신 비율 α
+- sample_count(INTEGER, 기본값 10)
+    반영할 최근 진료 수 (저장만 하고 아직 계산에 쓰지 않음)
+- delay_threshold(INTEGER, 기본값 10)
+    지연 알림 기준(분)
+- re_notify_threshold(INTEGER, 기본값 5)
+    추가 지연 재알림 간격(분) (저장만 하고 아직 쓰지 않음)
+- imminent_count(INTEGER, 기본값 2)
+    순서 임박 알림 기준(몇 명 전) (저장만 하고 아직 쓰지 않음)
+- updated_at(TIMESTAMPTZ)
+    설정을 마지막으로 바꾼 시간
+
 ---
 
-위 5개 테이블 외의 테이블은 없다(`_prisma_migrations` 제외).
+위 6개 테이블 외의 테이블은 없다(`_prisma_migrations` 제외).

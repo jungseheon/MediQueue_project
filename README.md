@@ -10,7 +10,8 @@
 - EWMA(지수 가중 이동 평균)로 의사별 진료 소요 시간을 보정한 예상 대기 시간
 - 실제 진료 진행 상태와 환자별 지연을 반영한 대기 시간 재계산
 - 예약·체크인·호출·부재·복귀 대기열 관리
-- 실시간 알림 (예정)
+- 의사별 알고리즘 설정(초진·재진 기본시간, 준비시간, EWMA 비율, 지연 알림 기준)
+- SSE로 대기열 변경 실시간 전송
 
 ## 기술 스택
 
@@ -18,7 +19,7 @@
 | --- | --- |
 | 백엔드 | Node.js, TypeScript, Express 5 |
 | 데이터베이스 | PostgreSQL 17 (Docker), Prisma 7 (`@prisma/adapter-pg`) |
-| 프론트엔드 | 빌드 없는 HTML·CSS·JavaScript (환자용 시연 화면) |
+| 프론트엔드 | 빌드 없는 HTML·CSS·JavaScript (환자용 시연 화면, 병원용 화면) |
 | 개발·테스트 | tsx, tsc, Vitest, supertest |
 
 ## 폴더 구조
@@ -28,6 +29,7 @@ src/            API 서버 (routes, services, utils, errors)
 prisma/         스키마와 migration
 tests/          백엔드 단위·통합 테스트 (Vitest)
 frontend/       환자용 화면 (frontend/README.md 참고)
+frontend/hospital/  병원용 화면: 대기열 대시보드, 예약 관리 (frontend/hospital/README.md 참고)
 docs/           API 명세(api.md), 테이블 정의(entities.md)
 dump.sql        개발용 샘플 데이터 (데이터 전용)
 ~~~
@@ -61,6 +63,8 @@ npm run dev           # API 서버 http://localhost:3000
 npm run dev:patient   # 환자용 화면 http://localhost:5173
 curl http://localhost:3000/health   # DB 연결 확인
 ~~~
+
+병원용 화면은 API 서버를 켠 뒤 `frontend/hospital/dashboard.html`(대기열 대시보드)이나 `frontend/hospital/appointments.html`(예약 관리)을 브라우저로 연다.
 
 빌드 후 실행은 `npm run build && npm start`. 종료는 `Ctrl+C`, DB 컨테이너는 `docker compose stop db`.
 
@@ -103,10 +107,13 @@ docker exec -i mediqueue-db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB' < dum
 | DELETE | `/api/appointments/:id` | 예약 취소 (`cancelled`로 변경) |
 | POST | `/api/appointments/:id/check-in` | 체크인, 대기 순번 발급 |
 | GET | `/api/doctors/:doctorId/queue` | 의사별 대기열과 예상 시작·대기·지연 시간 |
+| GET | `/api/doctors/:doctorId/stream` | 의사별 대기열 변경 실시간 구독 (SSE) |
 | PATCH | `/api/queue-entries/:id/status` | 대기 상태 변경, 진료 완료 시 EWMA 갱신 |
 | POST | `/api/queue-entries/:id/call` | 환자 호출 |
 | POST | `/api/queue-entries/:id/disappear` | 호출 후 부재 처리, 순번 미루기 |
 | POST | `/api/queue-entries/:id/return` | 부재 환자 대기열 복귀 |
+| GET | `/api/algorithm-config/:doctorId` | 의사별 알고리즘 설정 조회 |
+| PUT | `/api/algorithm-config/:doctorId` | 의사별 알고리즘 설정 저장 |
 
 ## GitHub 협업 규칙
 
