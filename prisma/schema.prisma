@@ -41,7 +41,7 @@ model Patient {
   @@map("patients")
 }
 
-// 예약 및 대기열 모델
+// 예약 모델
 model Appointment {
   id          BigInt            @id @default(autoincrement()) //예약 번호
   doctorId    BigInt            @map("doctor_id")
@@ -57,17 +57,17 @@ model Appointment {
   @@map("appointments")
 }
 
-// 예약 및 대기열 모델 (Cont.)
+// 대기표 모델 (예약당 1개)
 model QueueEntry {
-  id            BigInt      @id @default(autoincrement())
-  appointmentId BigInt      @unique @map("appointment_id") //1대1 유일성 제약(하나의 예약 건당 단 하나의 대기표)
-  queuePosition Int         @map("queue_position") //현재 대기실에서의 순번
-  status        QueueStatus
-  checkedInAt   DateTime?   @map("checked_in_at") @db.Timestamptz //현장 도착 접수 시각
-  calledAt      DateTime?   @map("called_at") @db.Timestamptz //진료실 호출 시각 (호출 상태는 따로 두지 않음)
-  startedAt     DateTime?   @map("started_at") @db.Timestamptz //진료실 입장/진료 시작 시각
-  completedAt   DateTime?   @map("completed_at") @db.Timestamptz //진료 완료 시각
-  disappearCount Int        @default(0) @map("disappear_count") //부재 처리 횟수 (2회 초과 시 no_show 전환)
+  id             BigInt      @id @default(autoincrement())
+  appointmentId  BigInt      @unique @map("appointment_id") //1대1 유일성 제약(하나의 예약 건당 단 하나의 대기표)
+  queuePosition  Int         @map("queue_position") //현재 대기실에서의 순번
+  status         QueueStatus
+  checkedInAt    DateTime?   @map("checked_in_at") @db.Timestamptz //현장 도착 접수 시각
+  calledAt       DateTime?   @map("called_at") @db.Timestamptz //진료실 호출 시각 (호출 상태는 따로 두지 않음)
+  startedAt      DateTime?   @map("started_at") @db.Timestamptz //진료실 입장/진료 시작 시각
+  completedAt    DateTime?   @map("completed_at") @db.Timestamptz //진료 완료 시각
+  disappearCount Int         @default(0) @map("disappear_count") //부재 처리 횟수 (2회 초과 시 no_show 전환)
 
   // 관계 설정 (예약 1:1 관계)
   appointment Appointment @relation(fields: [appointmentId], references: [id])

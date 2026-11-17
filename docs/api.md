@@ -9,7 +9,6 @@
 - 예약 상태는 `booked`, `cancelled`입니다.
 - 대기열 상태는 `booked`, `checked_in`, `cancelled`, `disappeared`, `in_progress`, `completed`, `no_show`입니다. `called`는 대기열 상태가 아니며, 호출 시각을 `called_at`에 기록합니다.
 - 예약 조회 결과의 상태 문자열은 소문자로 반환됩니다.
-- 2026-11-08 변경: 진료 중 상태 문자열이 `inprogress`에서 `in_progress`로 바뀌었습니다. 요청 본문과 응답 모두 `in_progress`를 사용합니다. `inprogress`를 보내면 `400 Bad Request`입니다.
 - 일반적인 오류 응답 형식은 `{ "error": "오류 설명" }`입니다.
 
 ## 2. API 목록
@@ -24,10 +23,13 @@
 | DELETE | `/api/appointments/:id` | 예약 취소 |
 | POST | `/api/appointments/:id/check-in` | 예약 환자 체크인 및 대기 순번 발급 |
 | GET | `/api/doctors/:doctorId/queue` | 의사별 대기열 및 예상 대기시간 조회 |
+| GET | `/api/doctors/:doctorId/stream` | 의사별 대기열 변경 실시간 구독 (SSE) |
 | PATCH | `/api/queue-entries/:id/status` | 대기열 상태 변경 및 완료 통계 갱신 |
 | POST | `/api/queue-entries/:id/call` | 환자 호출 기록 및 안내 메시지 반환 |
 | POST | `/api/queue-entries/:id/disappear` | 호출 후 부재 처리 및 순번 조정 |
 | POST | `/api/queue-entries/:id/return` | 부재 환자를 대기열로 복귀 |
+| GET | `/api/algorithm-config/:doctorId` | 의사별 알고리즘 설정 조회 |
+| PUT | `/api/algorithm-config/:doctorId` | 의사별 알고리즘 설정 저장 |
 
 의사 및 환자를 생성·수정·삭제하는 API는 현재 제공하지 않습니다. 이 API들은 이미 등록된 `doctors`와 `patients` 레코드를 참조합니다.
 
@@ -241,7 +243,7 @@ curl -i http://localhost:3000/api/doctors/1/queue
 }
 ```
 
-각 대기 항목에는 예약 시각, 초진 여부, 예상 진료 시작 시각, 예상 대기 분, 예약 시각 대비 지연 분이 포함됩니다. 의사별 초진·재진 EWMA가 있으면 사용하고, 없으면 각각 12분·8분을 기본값으로 사용합니다. 진료 중인 환자가 있으면 그 환자의 초진·재진 예상시간이 끝나는 시각부터 대기 환자의 시작 시각을 계산합니다. 의사를 찾지 못하면 `404 Not Found`입니다.
+각 대기 항목에는 예약 시각, 초진 여부, 예상 진료 시작 시각, 예상 대기 분, 예약 시각 대비 지연 분이 포함됩니다. 의사별 초진·재진 EWMA가 있으면 사용하고, 없으면 의사별 알고리즘 설정(3.14)의 `firstVisitTime`·`reVisitTime`(설정이 없으면 12분·8분)을 사용합니다. 환자 간 준비시간 `prepTime`과 지연 알림 기준 `delayThreshold`도 설정값을 따릅니다. 진료 중인 환자가 있으면 그 환자의 초진·재진 예상시간이 끝나는 시각부터 대기 환자의 시작 시각을 계산합니다. 의사를 찾지 못하면 `404 Not Found`입니다.
 
 ### 3.9 대기열 상태 변경 및 진료시간 통계 갱신
 
@@ -263,7 +265,7 @@ JSON 본문에서 `status`를 지정합니다.
 | `completed` | `in_progress` | 같은 항목을 두 번 완료할 수 없음 (EWMA 중복 반영 방지) |
 
 - `in_progress`: 현재 시각을 `startedAt`으로 기록합니다.
-- `completed`: 현재 시각을 `completedAt`에 기록하고, 실제 진료 시간을 이용해 EWMA를 갱신합니다. 완료 이전에 같은 의사에게 완료된 진료 기록이 있으면 `재진`, 없으면 `초진` 통계를 갱신합니다. 이후 남은 대기자의 예상 시작·대기·지연 시간을 재계산합니다.
+- `completed`: 현재 시각을 `completedAt`에 기록하고, 실제 진료 시간을 이용해 EWMA를 갱신합니다. 갱신 비율은 의사별 설정의 `alpha`(없으면 0.3)이고, 아직 통계가 없으면 설정의 `firstVisitTime`·`reVisitTime`에서 시작합니다. 완료 이전에 같은 의사에게 완료된 진료 기록이 있으면 `재진`, 없으면 `초진` 통계를 갱신합니다. 이후 남은 대기자의 예상 시작·대기·지연 시간을 재계산합니다.
 - 다른 허용 상태: 전달한 상태만 기록합니다. 별도의 시각이나 EWMA 변경은 없습니다.
 
 ```sh
@@ -276,7 +278,7 @@ curl -i -X PATCH http://localhost:3000/api/queue-entries/1/status \
   --data '{"status":"completed"}'
 ```
 
-성공 응답의 `data`는 `updatedEntry`, `updatedEWMA`, `recalculatedQueue`를 포함합니다. 완료 외 상태에서는 `updatedEWMA`가 `null`, `recalculatedQueue`가 빈 배열입니다. 알 수 없는 대기 항목은 `404`, 허용되지 않은 상태는 `400`입니다.
+성공 응답의 `data`는 `updatedEntry`, `updatedEWMA`, `recalculatedQueue`를 포함합니다. 완료 외 상태에서는 `updatedEWMA`가 `null`, `recalculatedQueue`가 빈 배열입니다. 상태를 바꾸면 해당 의사의 SSE 구독자에게 `QUEUE_UPDATED` 이벤트를 보냅니다(3.13). 알 수 없는 대기 항목은 `404`, 허용되지 않은 상태는 `400`입니다.
 
 ### 3.10 환자 호출
 
@@ -339,6 +341,81 @@ curl -i -X POST http://localhost:3000/api/queue-entries/1/return
 ```
 
 성공 응답에는 환자 안내 메시지와 갱신된 대기 항목이 포함됩니다. 대상 상태가 `disappeared`가 아니면 `409 Conflict`, 대기 항목이 없으면 `404 Not Found`입니다.
+
+### 3.13 의사별 대기열 실시간 구독 (SSE)
+
+`GET /api/doctors/:doctorId/stream`
+
+Server-Sent Events(`text/event-stream`) 연결을 열어 두고, 해당 의사의 대기열이 바뀔 때마다 이벤트를 받습니다. 연결 직후 `CONNECTED` 이벤트를 한 번 보냅니다.
+
+```sh
+curl -N http://localhost:3000/api/doctors/1/stream
+```
+
+```text
+data: {"type":"CONNECTED","doctorId":"1"}
+
+data: {"type":"QUEUE_UPDATED","updatedEWMA":9.5,"recalculatedQueue":[...],"alertTargets":[...]}
+```
+
+- `QUEUE_UPDATED`: 대기열 상태 변경 API(3.9)가 성공하면 보냅니다. 호출·부재·복귀·체크인에서는 아직 보내지 않습니다.
+- `recalculatedQueue`: 진료 완료 시 남은 대기자의 예상 결과(`ticketId`, `estimatedStartTime`, `delayMinutes`, `isAlertTriggered`). 완료 외 상태에서는 빈 배열입니다.
+- `alertTargets`: `recalculatedQueue` 중 지연이 설정의 `delayThreshold`(없으면 10분) 이상인 항목입니다.
+
+브라우저에서는 `new EventSource("http://localhost:3000/api/doctors/1/stream")`로 구독합니다.
+
+### 3.14 의사별 알고리즘 설정 조회
+
+`GET /api/algorithm-config/:doctorId`
+
+의사별 예상시간 계산 설정을 조회합니다. 저장된 설정이 없으면 기본값을 반환합니다(이때 `id`는 없습니다). 의사를 찾지 못하면 `404 Not Found`입니다.
+
+```sh
+curl -i http://localhost:3000/api/algorithm-config/1
+```
+
+성공 응답 (`200 OK`):
+
+```json
+{
+  "data": {
+    "doctorId": "1",
+    "firstVisitTime": 12,
+    "reVisitTime": 8,
+    "prepTime": 1,
+    "alpha": 0.3,
+    "sampleCount": 10,
+    "delayThreshold": 10,
+    "reNotifyThreshold": 5,
+    "imminentCount": 2
+  }
+}
+```
+
+| 필드 | 기본값 | 허용 범위 | 의미 |
+|---|---|---|---|
+| `firstVisitTime` | 12 | 0 초과 240 이하 | 초진 EWMA가 없을 때 쓰는 초진 진료시간(분) |
+| `reVisitTime` | 8 | 0 초과 240 이하 | 재진 EWMA가 없을 때 쓰는 재진 진료시간(분) |
+| `prepTime` | 1 | 0 ~ 60 | 환자 간 준비시간(분) |
+| `alpha` | 0.3 | 0 초과 1 이하 | 진료 완료 시 EWMA 갱신 비율 |
+| `sampleCount` | 10 | 정수 1 ~ 1000 | 반영할 최근 진료 수 (아직 계산에 쓰지 않음) |
+| `delayThreshold` | 10 | 정수 0 ~ 240 | 지연 알림 기준(분) |
+| `reNotifyThreshold` | 5 | 정수 1 ~ 240 | 추가 지연 재알림 간격(분) (아직 쓰지 않음) |
+| `imminentCount` | 2 | 정수 0 ~ 100 | 순서 임박 알림 기준(몇 명 전) (아직 쓰지 않음) |
+
+### 3.15 의사별 알고리즘 설정 저장
+
+`PUT /api/algorithm-config/:doctorId`
+
+3.14의 필드 중 바꿀 값만 JSON 본문으로 보냅니다. 설정이 없으면 새로 만들고(보내지 않은 필드는 기본값), 있으면 보낸 필드만 바꿉니다. 그 밖의 필드는 무시합니다.
+
+```sh
+curl -i -X PUT http://localhost:3000/api/algorithm-config/1 \
+  -H 'Content-Type: application/json' \
+  --data '{"alpha":0.4,"delayThreshold":15}'
+```
+
+성공 응답(`200 OK`)의 `data`는 저장된 설정 전체(`id`, `doctorId`, `updatedAt` 포함)입니다. 값이 숫자가 아니거나 3.14 표의 허용 범위를 벗어나면 `400 Bad Request`(예: `alpha must be a number in (0, 1]`), 의사를 찾지 못하면 `404 Not Found`입니다.
 
 ## 4. 자동 예약 노쇼 처리
 

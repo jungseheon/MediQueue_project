@@ -1,76 +1,86 @@
 import { Router } from "express";
+import type { AlgorithmConfig } from "@prisma/client";
 import { prisma } from "../prisma";
+import { ApiError } from "../errors/apiError";
 import { parseBody, parseId } from "../utils/parsers";
+import { DEFAULT_ALGORITHM_CONFIG, type AlgorithmSettings } from "../services/queueEstimator";
 
 const router = Router();
+
+// 설정 필드별 허용 범위 (integer: 정수만 허용, minExclusive: min 초과여야 함)
+const FIELD_RULES: Record<
+  keyof AlgorithmSettings,
+  { min: number; max: number; integer?: boolean; minExclusive?: boolean }
+> = {
+  firstVisitTime: { min: 0, max: 240, minExclusive: true },
+  reVisitTime: { min: 0, max: 240, minExclusive: true },
+  prepTime: { min: 0, max: 60 },
+  alpha: { min: 0, max: 1, minExclusive: true },
+  sampleCount: { min: 1, max: 1000, integer: true },
+  delayThreshold: { min: 0, max: 240, integer: true },
+  reNotifyThreshold: { min: 1, max: 240, integer: true },
+  imminentCount: { min: 0, max: 100, integer: true },
+};
+
+function parseSettings(body: Record<string, unknown>): Partial<AlgorithmSettings> {
+  const settings: Partial<AlgorithmSettings> = {};
+  for (const field of Object.keys(FIELD_RULES) as (keyof AlgorithmSettings)[]) {
+    if (!Object.hasOwn(body, field)) continue;
+    const rule = FIELD_RULES[field];
+    const value = body[field];
+    const valid =
+      typeof value === "number" &&
+      Number.isFinite(value) &&
+      (!rule.integer || Number.isInteger(value)) &&
+      (rule.minExclusive ? value > rule.min : value >= rule.min) &&
+      value <= rule.max;
+    if (!valid) {
+      // 예: "alpha must be a number in (0, 1]"
+      const range = `${rule.minExclusive ? "(" : "["}${rule.min}, ${rule.max}]`;
+      throw new ApiError(400, `${field} must be ${rule.integer ? "an integer" : "a number"} in ${range}`);
+    }
+    settings[field] = value;
+  }
+  return settings;
+}
+
+function serializeConfig(config: AlgorithmConfig) {
+  return { ...config, id: config.id.toString(), doctorId: config.doctorId.toString() };
+}
+
+async function ensureDoctorExists(doctorId: bigint) {
+  const doctor = await prisma.doctor.findUnique({ where: { id: doctorId }, select: { id: true } });
+  if (!doctor) throw new ApiError(404, "Doctor not found");
+}
 
 // GET /api/algorithm-config/:doctorId (설정 조회)
 router.get("/algorithm-config/:doctorId", async (req, res) => {
   const doctorId = parseId(req.params.doctorId, "doctorId");
+  await ensureDoctorExists(doctorId);
 
-  const config = await prisma.algorithmConfig.findUnique({
-    where: { doctorId },
-  });
+  const config = await prisma.algorithmConfig.findUnique({ where: { doctorId } });
 
-  // DB에 저장된 설정이 없으면 기본값 반환[cite: 3]
+  // 저장된 설정이 없으면 기본값 반환
   res.json({
     data: config
-      ? {
-          ...config,
-          id: config.id.toString(),
-          doctorId: config.doctorId.toString(),
-        }
-      : {
-          doctorId: doctorId.toString(),
-          firstVisitTime: 12.0,
-          reVisitTime: 8.0,
-          prepTime: 1.0,
-          alpha: 0.3,
-          sampleCount: 10,
-          delayThreshold: 10,
-          reNotifyThreshold: 5,
-          imminentCount: 2,
-        },
+      ? serializeConfig(config)
+      : { doctorId: doctorId.toString(), ...DEFAULT_ALGORITHM_CONFIG },
   });
 });
 
-// PUT /api/algorithm-config/:doctorId (설정 수정 및 저장)
+// PUT /api/algorithm-config/:doctorId (보낸 필드만 수정, 설정이 없으면 기본값으로 생성)
 router.put("/algorithm-config/:doctorId", async (req, res) => {
   const doctorId = parseId(req.params.doctorId, "doctorId");
-  const body = parseBody(req.body);
+  const settings = parseSettings(parseBody(req.body));
+  await ensureDoctorExists(doctorId);
 
   const saved = await prisma.algorithmConfig.upsert({
     where: { doctorId },
-    update: {
-      firstVisitTime: typeof body.firstVisitTime === "number" ? body.firstVisitTime : undefined,
-      reVisitTime: typeof body.reVisitTime === "number" ? body.reVisitTime : undefined,
-      prepTime: typeof body.prepTime === "number" ? body.prepTime : undefined,
-      alpha: typeof body.alpha === "number" ? body.alpha : undefined,
-      sampleCount: typeof body.sampleCount === "number" ? body.sampleCount : undefined,
-      delayThreshold: typeof body.delayThreshold === "number" ? body.delayThreshold : undefined,
-      reNotifyThreshold: typeof body.reNotifyThreshold === "number" ? body.reNotifyThreshold : undefined,
-      imminentCount: typeof body.imminentCount === "number" ? body.imminentCount : undefined,
-    },
-    create: {
-      doctorId,
-      firstVisitTime: typeof body.firstVisitTime === "number" ? body.firstVisitTime : 12.0,
-      reVisitTime: typeof body.reVisitTime === "number" ? body.reVisitTime : 8.0,
-      prepTime: typeof body.prepTime === "number" ? body.prepTime : 1.0,
-      alpha: typeof body.alpha === "number" ? body.alpha : 0.3,
-      sampleCount: typeof body.sampleCount === "number" ? body.sampleCount : 10,
-      delayThreshold: typeof body.delayThreshold === "number" ? body.delayThreshold : 10,
-      reNotifyThreshold: typeof body.reNotifyThreshold === "number" ? body.reNotifyThreshold : 5,
-      imminentCount: typeof body.imminentCount === "number" ? body.imminentCount : 2,
-    },
+    update: settings,
+    create: { doctorId, ...DEFAULT_ALGORITHM_CONFIG, ...settings },
   });
 
-  res.json({
-    data: {
-      ...saved,
-      id: saved.id.toString(),
-      doctorId: saved.doctorId.toString(),
-    },
-  });
+  res.json({ data: serializeConfig(saved) });
 });
 
 export default router;

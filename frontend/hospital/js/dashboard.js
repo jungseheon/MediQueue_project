@@ -1,5 +1,5 @@
 // 진료실 대기열 대시보드
-// 사용 API: GET /api/appointments, GET /api/doctors/:id/queue,
+// 사용 API: GET /api/appointments, GET /api/doctors/:id/queue, GET /api/doctors/:id/stream(SSE),
 //          PATCH /api/queue-entries/:id/status, POST /api/queue-entries/:id/(call|disappear|return)
 
 const state = {
@@ -10,6 +10,7 @@ const state = {
   tab: "queue", // queue | today
   showAll: false, // 모바일 "더 보기"
   lastEwma: null, // 진료 완료 응답의 updatedEWMA
+  stream: null, // 선택한 의사의 SSE 연결
 };
 
 const $ = (id) => document.getElementById(id);
@@ -49,6 +50,19 @@ async function load() {
   } catch (e) {
     alert("데이터를 불러오지 못했습니다: " + e.message);
   }
+}
+
+// 선택한 의사의 대기열이 다른 화면에서 바뀌면(진료 시작·완료) 바로 다시 불러온다
+function subscribe() {
+  if (state.stream) state.stream.close();
+  state.stream = state.doctorId ? Api.subscribeQueue(state.doctorId) : null;
+  if (!state.stream) return;
+  state.stream.onmessage = (e) => {
+    const event = JSON.parse(e.data);
+    if (event.type !== "QUEUE_UPDATED") return;
+    if (event.updatedEWMA != null) state.lastEwma = event.updatedEWMA;
+    load();
+  };
 }
 
 // 의사 목록 API가 없어 예약 목록에 있는 의사들로 진료실 선택지를 만든다
@@ -293,10 +307,12 @@ $("doctorSelect").onchange = (e) => {
   state.lastEwma = null;
   state.showAll = false;
   localStorage.setItem("mq.doctorId", state.doctorId);
+  subscribe();
   load();
 };
 
 window.addEventListener("resize", renderList);
 setInterval(updateElapsed, 1000);
-setInterval(load, 30000); // 30초마다 자동 갱신 (SSE 구현 전 임시)
-load();
+// 호출·부재·복귀·체크인은 아직 SSE 이벤트가 없으므로 30초마다 함께 갱신한다
+setInterval(load, 30000);
+load().then(subscribe);

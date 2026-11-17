@@ -222,11 +222,7 @@ router.post("/:id/check-in", async (req, res) => {
     // 1. 예약 정보 확인
     const appointment = await tx.appointment.findUnique({
       where: { id },
-      include: {
-        doctor: true,
-        patient: true,
-        queueEntry: true,
-      },
+      include: appointmentInclude,
     });
 
     if (!appointment) {
@@ -297,6 +293,8 @@ router.post("/:id/check-in", async (req, res) => {
       });
     }
 
+    // 응답의 appointment에는 갱신 전 대기표가 들어 있으므로 queueEntry는 따로 반환한다
+    const { queueEntry: _previousEntry, ...appointmentData } = serializeAppointment(appointment);
     return {
       queueEntry: {
         id: queueEntry.id.toString(),
@@ -305,22 +303,7 @@ router.post("/:id/check-in", async (req, res) => {
         status: queueEntry.status.toLowerCase(),
         checkedInAt: queueEntry.checkedInAt,
       },
-      appointment: {
-        id: appointment.id.toString(),
-        doctorId: appointment.doctorId.toString(),
-        patientId: appointment.patientId.toString(),
-        scheduledAt: appointment.scheduledAt,
-        status: appointment.status.toLowerCase(),
-        doctor: {
-          id: appointment.doctor.id.toString(),
-          displayName: appointment.doctor.displayName,
-          department: appointment.doctor.department,
-        },
-        patient: {
-          id: appointment.patient.id.toString(),
-          displayName: appointment.patient.displayName,
-        },
-      },
+      appointment: appointmentData,
     };
   });
 

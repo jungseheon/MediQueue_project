@@ -1,4 +1,3 @@
-import "dotenv/config";
 import cors from "cors";
 import express, { type ErrorRequestHandler } from "express";
 import { Prisma } from "@prisma/client";
@@ -6,6 +5,7 @@ import { prisma } from "./prisma";
 import { ApiError } from "./errors/apiError";
 import appointmentRoutes from "./routes/appointmentRoutes";
 import queueRoutes from "./routes/queueRoutes";
+import algorithmConfigRoutes from "./routes/algorithmConfigRoutes";
 
 const app = express();
 
@@ -26,6 +26,7 @@ app.get("/health", async (_req, res) => {
 // API Routes
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api", queueRoutes);
+app.use("/api", algorithmConfigRoutes);
 
 // Global Error Handler
 const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {

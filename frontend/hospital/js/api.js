@@ -20,6 +20,7 @@ const Api = {
   call: (id) => api(`/api/queue-entries/${id}/call`, { method: "POST" }),
   disappear: (id) => api(`/api/queue-entries/${id}/disappear`, { method: "POST", body: JSON.stringify({}) }),
   returnToQueue: (id) => api(`/api/queue-entries/${id}/return`, { method: "POST" }),
+  subscribeQueue: (doctorId) => new EventSource(`${API_BASE}/api/doctors/${doctorId}/stream`),
 };
 
 // 시간 표시
@@ -58,7 +59,7 @@ function delayText(minutes) {
   return minutes > 0 ? `+${minutes}분` : "정시";
 }
 
-// 지연 알림 기준(백엔드 calculator 기본값 10분)
+// 지연 알림 기준 (백엔드 알고리즘 설정 delayThreshold의 기본값 10분)
 const DELAY_ALERT_MINUTES = 10;
 
 // 대기열 상태
