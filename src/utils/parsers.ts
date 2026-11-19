@@ -78,3 +78,11 @@ export function parseBody(value: unknown): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
+
+// 이름·진료과 같은 문자열 입력: 앞뒤 공백을 지우고, 비어 있거나 너무 길면 400
+export function parseText(value: unknown, field: string, maxLength = 50): string {
+  if (typeof value !== "string" || value.trim() === "" || value.trim().length > maxLength) {
+    throw new ApiError(400, `${field} must be a non-empty string of at most ${maxLength} characters`);
+  }
+  return value.trim();
+}
