@@ -158,3 +158,8 @@ export async function estimateDoctorQueue(doctorId: bigint, now = new Date()) {
     estimate: estimates[index],
   }));
 }
+
+// 예상 시작 시각까지 남은 분 (이미 지났으면 0)
+export function waitMinutesUntil(estimatedStartTime: Date, now: Date): number {
+  return Math.max(0, Math.ceil((estimatedStartTime.getTime() - now.getTime()) / 60_000));
+}
