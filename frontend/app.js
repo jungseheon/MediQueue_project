@@ -20,7 +20,14 @@ const dialog = document.querySelector('dialog');
 const hospitalOf = item => hospitals.find(hospital => hospital.id === item.hospitalId);
 const active = () => appointments.filter(item => item.status === 'active' && item.date >= today()).sort((first, second) => `${first.date}${first.time}`.localeCompare(`${second.date}${second.time}`));
 const button = (text, action, id = '', primary = false) => `<button class="${primary ? 'primary' : ''}" data-action="${action}" data-id="${id}">${text}</button>`;
-function notify(message) { document.querySelector('#notice').textContent = message; }
+let noticeTimer;
+function notify(message) {
+  const notice = document.querySelector('#notice');
+  notice.textContent = '';
+  clearTimeout(noticeTimer);
+  requestAnimationFrame(() => { notice.textContent = message; });
+  noticeTimer = setTimeout(() => { notice.textContent = ''; }, 3000);
+}
 function persist() { try { localStorage.setItem(storageKey, JSON.stringify({ appointments, settings })); return true; } catch { notify('저장 공간을 사용할 수 없어 이번 화면에서만 유지됩니다.'); return false; } }
 function details(item) { return `<dl><dt>병원명</dt><dd>${hospitalOf(item).name}</dd><dt>진료일</dt><dd>${formatDate(item.date)}</dd><dt>진료시간</dt><dd>${item.time || '시간을 선택해 주세요'}</dd><dt>진료 유형</dt><dd>${item.type}</dd><dt>담당의</dt><dd>${item.doctor}</dd></dl>`; }
 function empty(text) { return `<section class="card empty"><p>${text}</p><a class="button primary" href="#search">병원 검색 · 예약</a></section>`; }
@@ -87,7 +94,7 @@ document.addEventListener('click', event => {
     editingId = null; draft.time = ''; dialog.close(); const saved = persist(); goAppointments(booked); if (saved) notify('예약이 확정되었습니다. (시연용)'); return;
   }
   if (action === 'cancel') { showDialog(`<h2>예약을 취소할까요?</h2>${details(item)}<div class="actions">${button('유지하기', 'close')}${button('예약 취소 확정', 'cancel-confirm', id, true)}</div>`); return; }
-  if (action === 'cancel-confirm') { item.status = 'cancelled'; dialog.close(); const saved = persist(); if (saved) notify('예약이 취소되었습니다.'); }
+  if (action === 'cancel-confirm') { item.status = 'cancelled'; if (editingId === id) { editingId = null; draft.time = ''; } dialog.close(); const saved = persist(); if (saved) notify('예약이 취소되었습니다.'); }
   render();
 });
 window.addEventListener('hashchange', () => render(true));
