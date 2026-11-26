@@ -13,7 +13,7 @@
     <div class="logo-sub">병원 관리자 · 의료진</div>
     <a href="dashboard.html" class="active">진료실 대기열 대시보드</a>
     <a href="appointments.html">예약 및 환자 관리</a>
-    <a href="#">예측 알고리즘 설정</a>
+    <a href="settings.html">예측 알고리즘 설정</a>
     <div class="footer">의료진 · 로그아웃</div>
   </nav>
 
@@ -40,6 +40,8 @@
         <div class="elapsed">
           <div class="label">경과 시간</div>
           <div class="time" id="curElapsed">--:--</div>
+          <div class="expected" id="curExpected"></div>
+          <div class="badge strong over" id="curOver" hidden></div>
         </div>
       </div>
       <div class="actions">
@@ -83,7 +85,7 @@
   <nav class="bottom-nav">
     <a href="dashboard.html" class="active">대기열</a>
     <a href="appointments.html">예약 관리</a>
-    <a href="#">설정</a>
+    <a href="settings.html">설정</a>
   </nav>
 
   <script src="js/api.js"></script>

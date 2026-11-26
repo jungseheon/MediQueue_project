@@ -21,7 +21,38 @@ const Api = {
   disappear: (id) => api(`/api/queue-entries/${id}/disappear`, { method: "POST", body: JSON.stringify({}) }),
   returnToQueue: (id) => api(`/api/queue-entries/${id}/return`, { method: "POST" }),
   subscribeQueue: (doctorId) => new EventSource(`${API_BASE}/api/doctors/${doctorId}/stream`),
+  getConfig: (doctorId) => api(`/api/algorithm-config/${doctorId}`),
+  saveConfig: (doctorId, data) => api(`/api/algorithm-config/${doctorId}`, { method: "PUT", body: JSON.stringify(data) }),
 };
+
+// 알고리즘 설정 기본값 (백엔드 DEFAULT_ALGORITHM_CONFIG와 같다)
+const DEFAULT_ALGORITHM_CONFIG = {
+  firstVisitTime: 12, // 초진 기본시간(분)
+  reVisitTime: 8, // 재진 기본시간(분)
+  prepTime: 1, // 환자 간 준비시간(분)
+  alpha: 0.3, // EWMA 보정 비율
+  sampleCount: 10, // 반영할 최근 진료 수
+  delayThreshold: 10, // 지연 알림 기준(분)
+  reNotifyThreshold: 5, // 추가 지연 재알림(분)
+  imminentCount: 2, // 순서 임박 알림(명 전)
+};
+
+// 같은 의사에게 진료 완료 이력이 있으면 재진, 없으면 초진 (백엔드 getFirstVisitMap과 같은 기준)
+function isFirstVisit(appt, appointments) {
+  return !appointments.some(
+    (a) =>
+      a.id !== appt.id &&
+      a.doctorId === appt.doctorId &&
+      a.patientId === appt.patientId &&
+      a.queueEntry &&
+      a.queueEntry.status === "completed",
+  );
+}
+
+// 진료 시작~완료 시간(분)
+function serviceMinutes(entry) {
+  return (new Date(entry.completedAt) - new Date(entry.startedAt)) / 60000;
+}
 
 // 시간 표시
 const TZ = "Asia/Seoul";

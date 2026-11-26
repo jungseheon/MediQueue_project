@@ -11,7 +11,13 @@ const state = {
   showAll: false, // 모바일 "더 보기"
   lastEwma: null, // 진료 완료 응답의 updatedEWMA
   stream: null, // 선택한 의사의 SSE 연결
+  config: { ...DEFAULT_ALGORITHM_CONFIG }, // 선택한 의사의 알고리즘 설정
 };
+
+// 지연 알림 기준(분): 의사별 알고리즘 설정의 delayThreshold
+function alertThreshold() {
+  return state.config.delayThreshold;
+}
 
 const $ = (id) => document.getElementById(id);
 const MOBILE_PREVIEW = 4;
@@ -42,9 +48,14 @@ async function load() {
     state.appointments = await Api.getAppointments();
     fillDoctorSelect();
     if (state.doctorId) {
-      const data = await Api.getQueue(state.doctorId);
+      const [data, config] = await Promise.all([
+        Api.getQueue(state.doctorId),
+        // 설정을 못 불러와도 대시보드는 기본값으로 계속 보여준다
+        Api.getConfig(state.doctorId).catch(() => DEFAULT_ALGORITHM_CONFIG),
+      ]);
       state.queue = data.queue;
       state.generatedAt = data.generatedAt;
+      state.config = { ...DEFAULT_ALGORITHM_CONFIG, ...config };
     }
     render();
   } catch (e) {
@@ -97,8 +108,12 @@ function renderCurrent() {
   const rows = queueRows();
 
   if (cur) {
+    // 예약 시각보다 늦게 시작했으면 몇 분 늦었는지 함께 표시
+    const startDelay = Math.round((new Date(cur.queueEntry.startedAt) - new Date(cur.scheduledAt)) / 60000);
     $("curName").textContent = `#${cur.id} · ${patientName(cur)}`;
-    $("curMeta").textContent = `예약 ${fmtTime(cur.scheduledAt)} · 진료 시작 ${fmtTime(cur.queueEntry.startedAt)}`;
+    $("curMeta").innerHTML =
+      `예약 ${fmtTime(cur.scheduledAt)} · 진료 시작 ${fmtTime(cur.queueEntry.startedAt)}` +
+      (startDelay > 0 ? ` · <span class="bold">예약보다 +${startDelay}분 지연</span>` : "");
   } else {
     $("curName").textContent = "진료 중인 환자 없음";
     $("curMeta").textContent = "";
@@ -116,12 +131,24 @@ function updateElapsed() {
   const cur = currentPatient();
   if (!cur || !cur.queueEntry.startedAt) {
     $("curElapsed").textContent = "--:--";
+    $("curExpected").textContent = "";
+    $("curOver").hidden = true;
     return;
   }
   const sec = Math.max(0, Math.floor((Date.now() - new Date(cur.queueEntry.startedAt)) / 1000));
   const mm = String(Math.floor(sec / 60)).padStart(2, "0");
   const ss = String(sec % 60).padStart(2, "0");
   $("curElapsed").textContent = `${mm}:${ss}`;
+
+  // 예상 진료시간: 알고리즘 설정의 초진/재진 기본시간
+  const first = isFirstVisit(cur, state.appointments);
+  const expected = first ? state.config.firstVisitTime : state.config.reVisitTime;
+  $("curExpected").textContent = `예상 ${expected}분 (${first ? "초진" : "재진"})`;
+
+  // 예상보다 길어지면 초과 시간 표시
+  const over = Math.floor(sec / 60 - expected);
+  $("curOver").hidden = over <= 0;
+  $("curOver").textContent = `+${over}분 초과`;
 }
 
 function renderStats() {
@@ -140,7 +167,7 @@ function renderStats() {
 
 function delayCell(minutes) {
   if (minutes == null) return "—";
-  if (minutes >= DELAY_ALERT_MINUTES) return `<span class="bold">${delayText(minutes)} · 알림 발송</span>`;
+  if (minutes >= alertThreshold()) return `<span class="bold">${delayText(minutes)} · 알림 발송</span>`;
   return delayText(minutes);
 }
 
@@ -220,7 +247,7 @@ function renderList() {
         <div style="flex:1">
           <div class="title">#${it.apptId} · ${escapeHtml(it.name)}</div>
           <div class="desc">예약 ${fmtTime(it.scheduledAt)} → 예상 ${fmtTime(it.estimated)} · ${
-            it.delay >= DELAY_ALERT_MINUTES ? `<b>${delayText(it.delay)} 알림</b>` : it.delay != null ? delayText(it.delay) : ""
+            it.delay >= alertThreshold() ? `<b>${delayText(it.delay)} 알림</b>` : it.delay != null ? delayText(it.delay) : ""
           } · ${it.arrival}</div>
         </div>
         ${actionButtons(it.status, it.queueEntryId)}

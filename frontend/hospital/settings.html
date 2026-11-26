@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>예측 알고리즘 설정 - MediQueue</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- PC 사이드바 -->
+  <nav class="sidebar">
+    <div class="logo">MediQueue</div>
+    <div class="logo-sub">병원 관리자 · 의료진</div>
+    <a href="dashboard.html">진료실 대기열 대시보드</a>
+    <a href="appointments.html">예약 및 환자 관리</a>
+    <a href="settings.html" class="active">예측 알고리즘 설정</a>
+    <div class="footer">원무과 관리자 · 로그아웃</div>
+  </nav>
+
+  <main class="main">
+    <div class="page-head">
+      <div>
+        <h1><span class="pc-only">대기시간 예측 알고리즘 설정</span><span class="mobile-only">예측 알고리즘 설정</span></h1>
+        <div class="sub pc-only">진료실별로 예측 변수와 알림 기준을 설정하고 모니터링합니다.</div>
+      </div>
+      <div>
+        <label class="pc-only">적용 진료실</label>
+        <select id="doctorSelect"></select>
+      </div>
+    </div>
+
+    <!-- 모니터링 -->
+    <section class="card section">
+      <div class="section-head">
+        <h2 id="monitorTitle">모니터링</h2>
+        <div class="tabs">
+          <button class="btn sm active" data-period="today">오늘</button>
+          <button class="btn sm" data-period="week">최근 7일</button>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="card stat"><div class="label">기본 평균 T<sub>avg</sub></div><div class="value" id="mAvg">-</div></div>
+        <div class="card stat"><div class="label">현재 EWMA</div><div class="value" id="mEwma">-</div></div>
+        <div class="card stat"><div class="label">최근 실제 진료시간</div><div class="value" id="mLast">-</div></div>
+        <div class="card stat"><div class="label">예측 오차 (평균)</div><div class="value" id="mError">-</div></div>
+      </div>
+      <div class="chart" id="chart"></div>
+      <div class="hint">막대: 환자별 실제 진료시간 · 점선: T<sub>avg</sub> · 예측 오차는 초진/재진 기본시간과 실제 진료시간의 차이 평균</div>
+    </section>
+
+    <form id="configForm">
+      <!-- 1. 기본 평균 진료시간 -->
+      <section class="card section">
+        <h2>1. 기본 평균 진료시간 (T<sub>avg</sub>)</h2>
+        <div class="fields">
+          <div class="field"><label>초진 환자</label><input type="number" name="firstVisitTime" min="0.1" max="240" step="any" required /> 분</div>
+          <div class="field"><label>재진 환자</label><input type="number" name="reVisitTime" min="0.1" max="240" step="any" required /> 분</div>
+          <div class="field"><label>환자 간 준비 시간</label><input type="number" name="prepTime" min="0" max="60" step="any" required /> 분</div>
+        </div>
+      </section>
+
+      <!-- 2. EWMA 보정 비율 -->
+      <section class="card section">
+        <h2>2. EWMA 보정 비율 (α)</h2>
+        <p class="desc">EWMA<sub>t</sub> = α · x<sub>t</sub> + (1 − α) · EWMA<sub>t−1</sub></p>
+        <div class="alpha-row">
+          <div class="alpha-slider">
+            <label>보정 비율 α <span class="mobile-only alpha-value" id="alphaValue"></span></label>
+            <input type="range" id="alphaRange" min="0.1" max="0.9" step="0.05" />
+            <div class="range-labels"><span>0.1 · 안정적</span><span>0.9 · 민감</span></div>
+          </div>
+          <div class="field pc-only"><label>직접 입력</label><input type="number" name="alpha" min="0.01" max="1" step="any" required /></div>
+        </div>
+        <div class="field">
+          <label>반영할 최근 진료 수</label>
+          <select name="sampleCount">
+            <option value="5">최근 5명</option>
+            <option value="10">최근 10명</option>
+            <option value="20">최근 20명</option>
+            <option value="30">최근 30명</option>
+          </select>
+        </div>
+      </section>
+
+      <!-- 3. 알림 전송 기준 -->
+      <section class="card section">
+        <h2>3. 알림 전송 기준</h2>
+        <div class="fields">
+          <div class="field"><label>지연 알림 기준</label><input type="number" name="delayThreshold" min="0" max="240" step="1" required /> 분</div>
+          <div class="field"><label>추가 지연 재알림</label><input type="number" name="reNotifyThreshold" min="1" max="240" step="1" required /> 분</div>
+          <div class="field"><label>순서 임박 알림</label><input type="number" name="imminentCount" min="0" max="100" step="1" required /> 명 전</div>
+        </div>
+        <!-- 알림 채널: 백엔드 미지원(algorithm_configs에 필드 없음)이라 저장되지 않아 비활성화 -->
+        <div class="field">
+          <label>알림 채널</label>
+          <div class="checks">
+            <label><input type="checkbox" checked disabled /> 웹 · 앱 푸시</label>
+            <label><input type="checkbox" checked disabled /> 문자(SMS)</label>
+            <label><input type="checkbox" disabled /> 알림톡</label>
+          </div>
+        </div>
+      </section>
+
+      <div class="form-actions">
+        <button type="button" class="btn" id="btnReset">기본값으로 초기화</button>
+        <button type="submit" class="btn primary">저장</button>
+      </div>
+    </form>
+  </main>
+
+  <!-- 모바일 하단 내비게이션 -->
+  <nav class="bottom-nav">
+    <a href="dashboard.html">대기열</a>
+    <a href="appointments.html">예약 관리</a>
+    <a href="settings.html" class="active">설정</a>
+  </nav>
+
+  <script src="js/api.js"></script>
+  <script src="js/settings.js"></script>
+</body>
+</html>
