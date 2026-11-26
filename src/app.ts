@@ -6,6 +6,8 @@ import { ApiError } from "./errors/apiError";
 import appointmentRoutes from "./routes/appointmentRoutes";
 import queueRoutes from "./routes/queueRoutes";
 import algorithmConfigRoutes from "./routes/algorithmConfigRoutes";
+import doctorRoutes from "./routes/doctorRoutes";
+import patientRoutes from "./routes/patientRoutes";
 
 const app = express();
 
@@ -25,6 +27,8 @@ app.get("/health", async (_req, res) => {
 
 // API Routes
 app.use("/api/appointments", appointmentRoutes);
+app.use("/api/doctors", doctorRoutes);
+app.use("/api/patients", patientRoutes);
 app.use("/api", queueRoutes);
 app.use("/api", algorithmConfigRoutes);
 

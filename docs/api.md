@@ -22,6 +22,7 @@
 | PATCH | `/api/appointments/:id` | 예약 정보 또는 상태 수정 |
 | DELETE | `/api/appointments/:id` | 예약 취소 |
 | POST | `/api/appointments/:id/check-in` | 예약 환자 체크인 및 대기 순번 발급 |
+| GET | `/api/appointments/:id/wait` | 환자 본인의 대기 순번·예상 대기시간 조회 |
 | GET | `/api/doctors/:doctorId/queue` | 의사별 대기열 및 예상 대기시간 조회 |
 | GET | `/api/doctors/:doctorId/stream` | 의사별 대기열 변경 실시간 구독 (SSE) |
 | PATCH | `/api/queue-entries/:id/status` | 대기열 상태 변경 및 완료 통계 갱신 |
@@ -30,8 +31,17 @@
 | POST | `/api/queue-entries/:id/return` | 부재 환자를 대기열로 복귀 |
 | GET | `/api/algorithm-config/:doctorId` | 의사별 알고리즘 설정 조회 |
 | PUT | `/api/algorithm-config/:doctorId` | 의사별 알고리즘 설정 저장 |
-
-의사 및 환자를 생성·수정·삭제하는 API는 현재 제공하지 않습니다. 이 API들은 이미 등록된 `doctors`와 `patients` 레코드를 참조합니다.
+| GET | `/api/doctors` | 의사 목록 조회 (`department` 필터) |
+| GET | `/api/doctors/:id` | 의사 상세 조회 |
+| POST | `/api/doctors` | 의사 등록 |
+| PATCH | `/api/doctors/:id` | 의사 정보 수정 |
+| DELETE | `/api/doctors/:id` | 의사 삭제 (예약이 없을 때만) |
+| GET | `/api/doctors/:id/service-time-stats` | 의사별 초진·재진 EWMA(현재 예상 진료시간) 조회 |
+| GET | `/api/patients` | 환자 목록 조회 (`name` 검색) |
+| GET | `/api/patients/:id` | 환자 상세 조회 |
+| POST | `/api/patients` | 환자 등록 |
+| PATCH | `/api/patients/:id` | 환자 이름 수정 |
+| DELETE | `/api/patients/:id` | 환자 삭제 (예약이 없을 때만) |
 
 ## 3. 상세 API 명세
 
@@ -417,9 +427,149 @@ curl -i -X PUT http://localhost:3000/api/algorithm-config/1 \
 
 성공 응답(`200 OK`)의 `data`는 저장된 설정 전체(`id`, `doctorId`, `updatedAt` 포함)입니다. 값이 숫자가 아니거나 3.14 표의 허용 범위를 벗어나면 `400 Bad Request`(예: `alpha must be a number in (0, 1]`), 의사를 찾지 못하면 `404 Not Found`입니다.
 
+### 3.16 환자용 대기 정보 조회
+
+`GET /api/appointments/:id/wait`
+
+환자용 화면(`frontend/`)이 체크인한 오늘 예약의 대기 정보를 표시할 때 쓰는 API입니다. 의사 전체 대기열(3.8)과 달리 **해당 예약의 대기 정보만** 반환하며, 다른 환자의 ID·순번·예상 시간은 포함하지 않습니다. 조회 전에 노쇼 처리가 실행됩니다.
+
+```sh
+curl -i http://localhost:3000/api/appointments/1/wait
+```
+
+성공 응답 (`200 OK`):
+
+```json
+{
+  "data": {
+    "appointmentId": "1",
+    "doctor": { "id": "1", "displayName": "김의사", "department": "내과" },
+    "scheduledAt": "2026-11-10T00:30:00.000Z",
+    "appointmentStatus": "booked",
+    "queueStatus": "checked_in",
+    "generatedAt": "2026-11-10T00:45:00.000Z",
+    "waiting": {
+      "queuePosition": 3,
+      "peopleAhead": 2,
+      "isCalled": false,
+      "estimatedStartTime": "2026-11-10T01:11:00.000Z",
+      "estimatedWaitMinutes": 26,
+      "delayMinutes": 41,
+      "isDelayed": true
+    }
+  }
+}
+```
+
+| 필드 | 설명 |
+|---|---|
+| `queueStatus` | 대기열 상태. 대기 항목이 아직 없으면(체크인 전) `null` |
+| `waiting` | 대기 중(`checked_in`, `disappeared`)일 때만 값이 있고, 그 밖의 상태(체크인 전, 진료 중, 완료, 취소, 노쇼)에서는 `null` |
+| `waiting.queuePosition` | 대기 순번 |
+| `waiting.peopleAhead` | 앞에 남은 대기 인원 (진료 중인 환자는 제외) |
+| `waiting.isCalled` | 진료실 호출 여부 (`called_at` 기록 여부) |
+| `waiting.estimatedStartTime` | 예상 진료 시작 시각 |
+| `waiting.estimatedWaitMinutes` | 예상 시작까지 남은 분 |
+| `waiting.delayMinutes` | 예약 시각 대비 예상 지연 분 |
+| `waiting.isDelayed` | 지연이 의사별 `delayThreshold`(기본 10분) 이상인지 여부 |
+
+예상 시간은 3.8과 같은 방식으로 계산합니다. 예약을 찾지 못하면 `404 Not Found`, 잘못된 ID는 `400 Bad Request`입니다.
+
+### 3.17 의사 목록·상세 조회
+
+`GET /api/doctors`, `GET /api/doctors/:id`
+
+의사를 ID 오름차순으로 조회합니다. 목록 조회는 선택적 query parameter `department`(진료과 이름과 정확히 일치)로 필터링할 수 있습니다.
+
+```sh
+curl -i 'http://localhost:3000/api/doctors?department=내과'
+curl -i http://localhost:3000/api/doctors/1
+```
+
+```json
+{ "data": [{ "id": "1", "displayName": "김의사", "department": "내과" }] }
+```
+
+상세 조회는 `{ "data": { ...의사 객체 } }`이며, 의사를 찾지 못하면 `404 Not Found`입니다.
+
+### 3.18 의사 등록·수정·삭제
+
+`POST /api/doctors`, `PATCH /api/doctors/:id`, `DELETE /api/doctors/:id`
+
+| Field | Type | 설명 |
+|---|---|---|
+| `displayName` | 문자열 (1~50자) | 의사 이름 |
+| `department` | 문자열 (1~50자) | 진료과 |
+
+- 등록: 두 필드 모두 필수입니다. 성공 시 `201 Created`.
+- 수정: 보낸 필드만 바꿉니다. 수정할 필드가 하나도 없으면 `400`, 의사가 없으면 `404`.
+- 삭제: 예약 기록이 하나라도 있는 의사는 삭제하지 않고 `409 Conflict`를 반환합니다. 예약이 없으면 그 의사의 알고리즘 설정과 진료시간 통계를 함께 삭제합니다. 성공 시 삭제된 의사 객체를 반환합니다.
+- 문자열 앞뒤 공백은 지워서 저장하며, 비어 있거나 50자를 넘으면 `400 Bad Request`입니다.
+
+```sh
+curl -i -X POST http://localhost:3000/api/doctors \
+  -H 'Content-Type: application/json' \
+  --data '{"displayName":"김의사","department":"내과"}'
+```
+
+### 3.19 환자 목록·상세 조회
+
+`GET /api/patients`, `GET /api/patients/:id`
+
+환자를 ID 오름차순으로 조회합니다. 목록 조회는 선택적 query parameter `name`으로 이름에 해당 문자열이 포함된 환자만 검색할 수 있습니다.
+
+```sh
+curl -i 'http://localhost:3000/api/patients?name=이'
+```
+
+```json
+{ "data": [{ "id": "1", "displayName": "이환자" }] }
+```
+
+상세 조회에서 환자를 찾지 못하면 `404 Not Found`입니다.
+
+### 3.20 환자 등록·수정·삭제
+
+`POST /api/patients`, `PATCH /api/patients/:id`, `DELETE /api/patients/:id`
+
+- 등록·수정 본문은 `{ "displayName": "이환자" }`이며 `displayName`(1~50자)은 필수입니다. 등록 성공 시 `201 Created`.
+- 삭제: 예약 기록이 있는 환자는 `409 Conflict`입니다. 진료 이력이 초진·재진 판단에 쓰이기 때문입니다.
+- 환자를 찾지 못하면 `404 Not Found`입니다.
+
+### 3.21 의사별 초진·재진 EWMA 조회
+
+`GET /api/doctors/:id/service-time-stats`
+
+진료 완료(3.9) 때 갱신되는 의사별 초진·재진 EWMA, 즉 대기열 계산(3.8)에 실제로 쓰이는 예상 진료시간을 조회합니다. 아직 완료된 진료가 없어 통계가 없으면 알고리즘 설정(3.14)의 `firstVisitTime`·`reVisitTime`(설정이 없으면 12분·8분)을 돌려주고 `isDefault`를 `true`로 표시합니다.
+
+```sh
+curl -i http://localhost:3000/api/doctors/1/service-time-stats
+```
+
+성공 응답 (`200 OK`):
+
+```json
+{
+  "data": {
+    "doctorId": "1",
+    "firstVisit": { "ewmaMinutes": 13.6, "sampleCount": 3, "updatedAt": "2026-11-26T13:20:05.701Z", "isDefault": false },
+    "followUp": { "ewmaMinutes": 8, "sampleCount": 0, "updatedAt": null, "isDefault": true }
+  }
+}
+```
+
+| 필드 | 설명 |
+|---|---|
+| `ewmaMinutes` | 현재 예상 진료시간(분) |
+| `sampleCount` | EWMA에 반영된 진료 완료 건수 |
+| `updatedAt` | 마지막 갱신 시각, 통계가 없으면 `null` |
+| `isDefault` | 통계가 없어 설정 기본시간을 돌려준 경우 `true` |
+
+의사를 찾지 못하면 `404 Not Found`입니다.
+
 ## 4. 자동 예약 노쇼 처리
 
-서버 시작 시 한 번 실행하고, 이후 30초 간격으로 실행합니다. 또한 예약 목록·상세 조회, 의사별 대기열 조회, 체크인 요청 시에도 실행합니다.
+서버 시작 시 한 번 실행하고, 이후 30초 간격으로 실행합니다. 또한 예약 목록·상세 조회, 환자용 대기 정보 조회, 의사별 대기열 조회, 체크인 요청 시에도 실행합니다.
 
 예약 상태가 `booked`이고 예약 시각으로부터 5분 이상 경과했으며 체크인하지 않았다면 해당 예약의 대기 항목을 `no_show`로 처리합니다. 대기 항목이 없는 예약에는 `queue_position = 0`인 `no_show` 항목을 생성하며, 예약 상태 자체는 `booked`로 유지됩니다. 이미 체크인한 환자의 대기 상태는 자동 노쇼 처리 대상이 아닙니다.
 
@@ -428,9 +578,9 @@ curl -i -X PUT http://localhost:3000/api/algorithm-config/1 \
 | Status | 의미 |
 |---|---|
 | `200 OK` | 조회 또는 변경 성공 |
-| `201 Created` | 예약 생성 성공 |
+| `201 Created` | 예약·의사·환자 생성 성공 |
 | `400 Bad Request` | 잘못된 ID·날짜·상태·본문(JSON 형식 오류 포함) 또는 존재하지 않는 의사/환자 참조 |
-| `404 Not Found` | 예약, 의사 또는 대기 항목을 찾을 수 없음 |
-| `409 Conflict` | 현재 상태에서 허용되지 않는 체크인·취소·호출 등의 요청 |
+| `404 Not Found` | 예약, 의사, 환자 또는 대기 항목을 찾을 수 없음 |
+| `409 Conflict` | 현재 상태에서 허용되지 않는 체크인·취소·호출 등의 요청, 예약이 있는 의사·환자 삭제 |
 | `500 Internal Server Error` | 처리되지 않은 서버 오류 |
 | `503 Service Unavailable` | `/health` 데이터베이스 연결 확인 실패 |

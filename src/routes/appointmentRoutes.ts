@@ -4,7 +4,12 @@ import { prisma } from "../prisma";
 import { ApiError } from "../errors/apiError";
 import { parseBody, parseDate, parseId, parseStatus } from "../utils/parsers";
 import { processNoShows } from "../services/noShowProcessor";
-import { lockDoctorQueue } from "../services/queueEstimator";
+import {
+  ACTIVE_WAITING_STATUSES,
+  estimateDoctorQueue,
+  lockDoctorQueue,
+  waitMinutesUntil,
+} from "../services/queueEstimator";
 import { getKstDayRange, isSameKstDay } from "../utils/time";
 
 const router = Router();
@@ -79,6 +84,57 @@ router.get("/:id", async (req, res) => {
 
   if (!appointment) throw new ApiError(404, "Appointment not found");
   res.json({ data: serializeAppointment(appointment) });
+});
+
+// GET /api/appointments/:id/wait
+// 환자 본인의 대기 정보만 돌려준다. 다른 환자의 대기 정보는 담지 않는다.
+router.get("/:id/wait", async (req, res) => {
+  const id = parseId(req.params.id, "id");
+  const now = new Date();
+  await processNoShows(now);
+
+  const appointment = await prisma.appointment.findUnique({
+    where: { id },
+    include: { doctor: true, queueEntry: true },
+  });
+  if (!appointment) throw new ApiError(404, "Appointment not found");
+
+  const entry = appointment.queueEntry;
+  let waiting = null;
+
+  // 대기 중(checked_in, disappeared)일 때만 순번과 예상 시간을 계산한다
+  if (entry && ACTIVE_WAITING_STATUSES.includes(entry.status)) {
+    const queue = await estimateDoctorQueue(appointment.doctorId, now);
+    const index = queue.findIndex((item) => item.entry.id === entry.id);
+    if (index >= 0) {
+      const { estimate } = queue[index];
+      waiting = {
+        queuePosition: entry.queuePosition,
+        peopleAhead: index,
+        isCalled: entry.calledAt !== null,
+        estimatedStartTime: estimate.estimatedStartTime,
+        estimatedWaitMinutes: waitMinutesUntil(estimate.estimatedStartTime, now),
+        delayMinutes: estimate.delayMinutes,
+        isDelayed: estimate.isAlertTriggered,
+      };
+    }
+  }
+
+  res.json({
+    data: {
+      appointmentId: appointment.id.toString(),
+      doctor: {
+        id: appointment.doctor.id.toString(),
+        displayName: appointment.doctor.displayName,
+        department: appointment.doctor.department,
+      },
+      scheduledAt: appointment.scheduledAt,
+      appointmentStatus: appointment.status.toLowerCase(),
+      queueStatus: entry ? entry.status.toLowerCase() : null,
+      generatedAt: now,
+      waiting,
+    },
+  });
 });
 
 // POST /api/appointments

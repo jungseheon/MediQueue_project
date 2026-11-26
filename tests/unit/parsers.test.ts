@@ -6,6 +6,7 @@ import {
   parseQueueStatus,
   parseIntInRange,
   parseBody,
+  parseText,
 } from "../../src/utils/parsers";
 import { ApiError } from "../../src/errors/apiError";
 
@@ -168,5 +169,20 @@ describe("parseBody", () => {
 
   it("숫자 → 400 ApiError", () => {
     expect(() => parseBody(42)).toThrow(ApiError);
+  });
+});
+
+// ─── parseText ───────────────────────────────────────────────────────────────
+
+describe("parseText", () => {
+  it("앞뒤 공백을 지운 문자열 반환", () => {
+    expect(parseText("  김의사 ", "displayName")).toBe("김의사");
+  });
+
+  it("빈 문자열·공백만·문자열이 아닌 값·최대 길이 초과 → 400", () => {
+    for (const value of ["", "   ", 1, null, undefined, "가".repeat(51)]) {
+      expect(() => parseText(value, "displayName")).toThrow(ApiError);
+    }
+    expect(parseText("가".repeat(50), "displayName")).toHaveLength(50);
   });
 });

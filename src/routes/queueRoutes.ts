@@ -8,6 +8,7 @@ import {
   getAlgorithmSettings,
   getFirstVisitMap,
   lockDoctorQueue,
+  waitMinutesUntil,
 } from "../services/queueEstimator";
 import { ApiError } from "../errors/apiError";
 import { parseBody, parseId, parseIntInRange, parseQueueStatus } from "../utils/parsers";
@@ -51,10 +52,7 @@ router.get("/doctors/:doctorId/queue", async (req, res) => {
         isFirstVisit,
         scheduledAt: entry.appointment.scheduledAt,
         estimatedStartTime: estimate.estimatedStartTime,
-        estimatedWaitMinutes: Math.max(
-          0,
-          Math.ceil((estimate.estimatedStartTime.getTime() - now.getTime()) / 60_000),
-        ),
+        estimatedWaitMinutes: waitMinutesUntil(estimate.estimatedStartTime, now),
         delayMinutes: estimate.delayMinutes,
       })),
     },
