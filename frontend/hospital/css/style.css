@@ -92,6 +92,9 @@ tr.highlight td { background: #f3f3f3; }
 .current .meta { color: #555; font-size: 15px; }
 .current .elapsed { text-align: right; }
 .current .elapsed .time { font-size: 40px; font-weight: 700; }
+.current .elapsed .expected { font-size: 14px; color: #555; }
+.current .elapsed .over { display: inline-block; margin-top: 6px; }
+.current .elapsed .over[hidden] { display: none; }
 .current .actions { display: flex; gap: 10px; margin: 20px 0 12px; flex-wrap: wrap; }
 .current .actions .btn { padding: 12px 22px; }
 .current .note { font-size: 13px; color: #666; }
@@ -102,6 +105,27 @@ tr.highlight td { background: #f3f3f3; }
 .filters .field.grow { flex: 1; min-width: 200px; }
 .filters .field.grow input { width: 100%; }
 .week-strip, .chip-row, .mobile-selects { display: none; }
+
+/* 알고리즘 설정 */
+input[type="number"] { padding: 8px 12px; border: 1px solid #bbb; border-radius: 6px; width: 140px; }
+.section { padding: 20px 24px; margin-bottom: 16px; }
+.section h2 { font-size: 18px; margin: 0 0 12px; }
+.section .desc { color: #666; font-size: 14px; margin: 0 0 14px; }
+.section-head { display: flex; justify-content: space-between; align-items: center; }
+.section .field label { display: block; font-size: 14px; margin-bottom: 6px; }
+.section .field { margin-bottom: 12px; }
+.fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.alpha-row { display: flex; gap: 24px; align-items: flex-start; }
+.alpha-slider { flex: 1; }
+.alpha-slider input[type="range"] { width: 100%; }
+.range-labels { display: flex; justify-content: space-between; font-size: 13px; color: #666; }
+.checks { display: flex; gap: 20px; }
+.checks label { display: flex; align-items: center; gap: 6px; margin: 0; }
+.chart { border: 1px dashed #bbb; border-radius: 8px; background: #f6f6f6; padding: 8px; }
+.chart svg { display: block; width: 100%; max-height: 240px; }
+.hint { font-size: 13px; color: #666; margin-top: 8px; }
+.form-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.form-actions .btn { padding: 12px 24px; }
 
 /* 모바일 (768px 이하) */
 @media (max-width: 768px) {
@@ -157,6 +181,19 @@ tr.highlight td { background: #f3f3f3; }
   .chip-row button.active { background: #1a1a1a; color: #fff; }
   .mobile-selects { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .mobile-search { width: 100%; }
+
+  /* 알고리즘 설정 모바일 */
+  .section { padding: 16px; }
+  .section-head .tabs { display: none; } /* 모바일은 '오늘'만 (디자인 기준) */
+  .fields { grid-template-columns: 1fr; gap: 4px; }
+  .fields .field { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; }
+  .fields .field label { margin: 0; }
+  .fields input[type="number"] { width: 90px; }
+  .alpha-slider label { display: flex; justify-content: space-between; }
+  .alpha-value { font-weight: 700; }
+  .checks { flex-direction: column; gap: 10px; }
+  .form-actions .btn { flex: 1; }
+  .form-actions .btn.primary { flex: 2; }
 }
 @media (min-width: 769px) {
   .mobile-only { display: none !important; }
