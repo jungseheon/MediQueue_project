@@ -2,13 +2,41 @@
 
 const TZ = 'Asia/Seoul';
 
-// 백엔드에 병원 테이블과 의사 목록 API가 아직 없어서, 병원별 의사 ID를 여기서 연결한다.
-// 의사 ID와 이름은 dump.sql의 정신건강의학과 의사(13, 23번) 기준이다.
-// TODO: 의사 목록 API가 생기면 서버 응답으로 교체
-export const hospitals = [
-  { id: 'onyu', name: '온유 정신건강의학과', area: '서울 강남구', doctors: [{ id: '13', name: '가상 의사 08' }] },
-  { id: 'maeum', name: '마음봄 정신건강의학과', area: '서울 마포구', doctors: [{ id: '23', name: '가상 의사 18' }] },
+// 백엔드에 병원 테이블이 없어서 병원 이름·지역만 여기서 정하고 의사 ID로 연결한다.
+// 의사 이름·진료과는 의사 목록 API(GET /api/doctors)에서 받는다. (dump.sql 13, 23번 기준)
+export const clinics = [
+  { id: 'onyu', name: '온유 정신건강의학과', area: '서울 강남구', doctorIds: ['13'] },
+  { id: 'maeum', name: '마음봄 정신건강의학과', area: '서울 마포구', doctorIds: ['23'] },
 ];
+
+// 의사 목록 API 응답 → 화면의 병원 목록
+// clinics에 연결된 의사는 해당 병원에, 나머지는 진료과별 "협력 병원"으로 묶는다.
+export function buildHospitals(doctors, clinicList = clinics) {
+  const toDoctor = doctor => ({ id: doctor.id, name: doctor.displayName, department: doctor.department });
+  const linked = new Set(clinicList.flatMap(clinic => clinic.doctorIds));
+  const named = clinicList
+    .map(({ doctorIds, ...clinic }) => ({ ...clinic, doctors: doctors.filter(doctor => doctorIds.includes(doctor.id)).map(toDoctor) }))
+    .filter(clinic => clinic.doctors.length > 0); // DB에 없는 의사만 연결된 병원은 숨김
+
+  const byDepartment = new Map();
+  for (const doctor of doctors.filter(item => !linked.has(item.id))) {
+    if (!byDepartment.has(doctor.department)) byDepartment.set(doctor.department, []);
+    byDepartment.get(doctor.department).push(toDoctor(doctor));
+  }
+  const partners = [...byDepartment.keys()]
+    .sort((first, second) => first.localeCompare(second, 'ko'))
+    .map(department => ({ id: `dept:${department}`, name: `${department} 협력 병원`, area: department, doctors: byDepartment.get(department) }));
+
+  return [...named, ...partners];
+}
+
+// 병원명·지역·진료과·의사 이름으로 검색 (공백 무시)
+export function searchHospitals(hospitals, query) {
+  const keyword = query.replaceAll(' ', '');
+  return hospitals.filter(hospital =>
+    [hospital.name, hospital.area, ...hospital.doctors.flatMap(doctor => [doctor.name, doctor.department])]
+      .join('|').replaceAll(' ', '').includes(keyword));
+}
 
 export const times = ['13:30', '14:00', '14:30', '15:00', '15:30'];
 
@@ -41,7 +69,7 @@ export function toIso(date, time) {
   return `${date}T${time}:00+09:00`;
 }
 
-export function hospitalOfDoctor(doctorId) {
+export function hospitalOfDoctor(hospitals, doctorId) {
   return hospitals.find(hospital => hospital.doctors.some(doctor => doctor.id === doctorId)) ?? null;
 }
 
@@ -49,15 +77,20 @@ export function hospitalOfDoctor(doctorId) {
 export const CHECKED_IN = ['checked_in', 'disappeared', 'in_progress'];
 export const isCheckedIn = item => CHECKED_IN.includes(item.queueStatus);
 
-// 서버 예약 객체 → 화면용 예약
-export function fromApi(appointment) {
+// 예약 상태 + 대기 상태 → 화면 상태(active, cancelled, completed, noshow)
+export function screenStatus(appointmentStatus, queueStatus) {
+  if (appointmentStatus === 'cancelled' || queueStatus === 'cancelled') return 'cancelled';
+  if (queueStatus === 'completed') return 'completed';
+  if (queueStatus === 'no_show') return 'noshow';
+  return 'active';
+}
+
+// 서버 예약 객체 → 화면용 예약 (hospitals: buildHospitals 결과)
+export function fromApi(appointment, hospitals = []) {
   const { date, time } = splitKst(appointment.scheduledAt);
   const queueStatus = appointment.queueEntry?.status ?? null;
-  let status = 'active';
-  if (appointment.status === 'cancelled' || queueStatus === 'cancelled') status = 'cancelled';
-  else if (queueStatus === 'completed') status = 'completed';
-  else if (queueStatus === 'no_show') status = 'noshow';
-  const hospital = hospitalOfDoctor(appointment.doctorId);
+  const status = screenStatus(appointment.status, queueStatus);
+  const hospital = hospitalOfDoctor(hospitals, appointment.doctorId);
   return {
     id: appointment.id,
     doctorId: appointment.doctorId,
@@ -70,17 +103,30 @@ export function fromApi(appointment) {
     status,
     queueStatus,
     queuePosition: appointment.queueEntry?.queuePosition ?? null,
-    estimate: null, // 체크인 후 대기열 API로 채움
+    estimate: null, // 체크인 후 대기 정보 API로 채움
   };
 }
 
-// 대기열 API 항목에서 예상 진료 정보 추출
-export function estimateFromQueue(entry) {
-  if (!entry) return null;
+// 대기 정보 API(GET /api/appointments/:id/wait)의 waiting → 화면용 예상 진료 정보
+export function estimateFromWait(waiting) {
+  if (!waiting) return null;
   return {
-    start: nowTime(new Date(entry.estimatedStartTime)),
-    delay: Math.max(0, Math.round(entry.delayMinutes ?? 0)),
-    position: entry.queuePosition,
+    start: nowTime(new Date(waiting.estimatedStartTime)),
+    delay: Math.max(0, Math.round(waiting.delayMinutes ?? 0)),
+    position: waiting.queuePosition,
+    ahead: waiting.peopleAhead,
+    called: waiting.isCalled === true,
+    delayed: waiting.isDelayed === true,
+  };
+}
+
+// 대기 정보 API 응답을 화면용 예약에 반영 (체크인 이후 상태 변화 포함)
+export function applyWait(item, wait) {
+  return {
+    ...item,
+    queueStatus: wait.queueStatus,
+    status: screenStatus(wait.appointmentStatus, wait.queueStatus),
+    estimate: estimateFromWait(wait.waiting),
   };
 }
 
@@ -93,7 +139,7 @@ export function available(draft, doctorBooked, editingId = null, now = new Date(
     !doctorBooked.some(item => item.id !== editingId && item.status === 'active' && item.doctorId === draft.doctorId && item.date === draft.date && item.time === time));
 }
 
-export function validate(draft, { doctorBooked = [], mine = [] }, editingId = null, now = new Date()) {
+export function validate(draft, { doctorBooked = [], mine = [], hospitals = [] }, editingId = null, now = new Date()) {
   const hospital = hospitals.find(item => item.id === draft.hospitalId);
   if (!hospital || !hospital.doctors.some(doctor => doctor.id === draft.doctorId)) return '병원과 담당의를 확인해 주세요.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.date) || draft.date < today()) return '오늘 이후 날짜를 선택해 주세요.';

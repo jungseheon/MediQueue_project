@@ -1,4 +1,4 @@
-import { hospitals, times, today, shiftDate, formatDate, fromApi, estimateFromQueue, isCheckedIn, available, validate } from './model.mjs';
+import { times, today, shiftDate, formatDate, buildHospitals, searchHospitals, fromApi, applyWait, isCheckedIn, available, validate } from './model.mjs';
 import { api } from './api.mjs';
 
 // ---------- 상태 ----------
@@ -9,11 +9,13 @@ try {
   if (typeof saved?.delay === 'boolean' && typeof saved?.soon === 'boolean') settings = saved;
 } catch { /* 저장소를 못 쓰면 기본값 */ }
 
+let hospitals = [];                                                  // 의사 목록 API로 만든 병원 목록
+let patient = null;                                                  // 시연용 환자 정보
 let appointments = [];
-let load = { status: 'loading', error: '' };                       // 내 예약 불러오기 상태
+let load = { status: 'loading', error: '' };                       // 의사·환자·내 예약 불러오기 상태
 let slots = { doctorId: null, status: 'idle', error: '', items: [] }; // 선택한 의사의 예약 현황
 let busy = false;                                                    // 예약·변경·취소 요청 중
-let draft = { hospitalId: hospitals[0].id, doctorId: hospitals[0].doctors[0].id, date: today(), time: '' };
+let draft = { hospitalId: null, doctorId: null, date: today(), time: '' }; // 의사 목록을 받은 뒤 첫 병원으로 채움
 let editingId = null;
 let query = '';
 let tab = 'today';
@@ -44,39 +46,64 @@ function saveSettings() {
 }
 
 // ---------- 서버 통신 ----------
-async function loadAppointments() {
-  load = { status: 'loading', error: '' };
-  render();
+// 선택한 병원·담당의가 목록에 없으면 첫 병원의 첫 담당의로 맞춘다.
+function syncDraft() {
+  const hospital = hospitalOf(draft.hospitalId);
+  if (hospital?.doctors.some(doctor => doctor.id === draft.doctorId)) return;
+  const first = hospital ?? hospitals[0];
+  draft = { ...draft, hospitalId: first?.id ?? null, doctorId: first?.doctors[0]?.id ?? null, time: '' };
+}
+
+// 의사 목록, 환자 정보, 내 예약을 불러온다.
+// quiet: 자동 갱신용. 로딩 표시 없이 바꾸고, 실패하면 기존 화면을 유지한다.
+async function loadAppointments({ quiet = false } = {}) {
+  if (!quiet) {
+    load = { status: 'loading', error: '' };
+    render();
+  }
   try {
-    appointments = (await api.myAppointments()).map(fromApi);
-    await attachEstimates();
+    const [doctors, me, mine] = await Promise.all([api.doctors(), api.patient(), api.myAppointments()]);
+    hospitals = buildHospitals(doctors);
+    patient = me;
+    syncDraft();
+    appointments = await attachEstimates(mine.map(item => fromApi(item, hospitals)));
     load = { status: 'ready', error: '' };
   } catch (error) {
+    if (quiet) return;
     load = { status: 'error', error: error.message };
   }
   render();
 }
 
-// 오늘 체크인한 예약은 대기열 API에서 예상 진료 시각을 가져온다.
-async function attachEstimates() {
-  const targets = appointments.filter(item => item.status === 'active' && item.date === today() && isCheckedIn(item));
-  const doctorIds = [...new Set(targets.map(item => item.doctorId))];
-  const results = await Promise.allSettled(doctorIds.map(id => api.queue(id)));
-  results.forEach((result, index) => {
-    if (result.status !== 'fulfilled') return;
-    for (const item of targets.filter(target => target.doctorId === doctorIds[index])) {
-      item.estimate = estimateFromQueue(result.value.queue.find(entry => entry.appointmentId === item.id));
-    }
+// 오늘 체크인한 예약은 환자용 대기 정보 API로 순번·예상 진료 시각을 가져온다.
+// 한 건이 실패해도 나머지는 표시한다(실패한 건은 '계산 중').
+async function attachEstimates(list) {
+  const targets = list.filter(item => item.status === 'active' && item.date === today() && isCheckedIn(item));
+  const results = await Promise.allSettled(targets.map(item => api.wait(item.id)));
+  const waits = new Map(targets.map((item, index) => [item.id, results[index]]));
+  return list.map(item => {
+    const result = waits.get(item.id);
+    return result?.status === 'fulfilled' ? applyWait(item, result.value) : item;
   });
 }
 
+// 진료 진행에 따라 예상 시각이 바뀌므로 30초마다 다시 불러온다.
+// 예약 화면에서 입력 중이거나 확인 창이 열려 있으면 화면이 바뀌지 않도록 건너뛴다.
+const REFRESH_MS = 30_000;
+setInterval(() => {
+  const page = location.hash.slice(1) || 'home';
+  if (document.hidden || busy || dialog.open || page === 'search' || load.status !== 'ready') return;
+  loadAppointments({ quiet: true });
+}, REFRESH_MS);
+
 async function loadSlots(force = false) {
   const doctorId = draft.doctorId;
+  if (!doctorId) return;
   if (!force && slots.doctorId === doctorId) return; // 오류는 '다시 시도'로만 재요청
   slots = { doctorId, status: 'loading', error: '', items: [] };
   render();
   try {
-    const items = (await api.doctorBooked(doctorId)).map(fromApi);
+    const items = (await api.doctorBooked(doctorId)).map(item => fromApi(item, hospitals));
     if (draft.doctorId === doctorId) slots = { doctorId, status: 'ready', error: '', items };
   } catch (error) {
     if (draft.doctorId === doctorId) slots = { doctorId, status: 'error', error: error.message, items: [] };
@@ -111,26 +138,43 @@ function estimateText(item) {
 
 function queueNote(item) {
   if (item.queueStatus === 'in_progress') return '<p><b>진료 중입니다.</b></p>';
-  if (isCheckedIn(item)) return `<p><b>체크인 완료${item.estimate ? ` · 대기 ${item.estimate.position}번` : ''}</b> · 체크인 후에는 예약을 변경하거나 취소할 수 없습니다.</p>`;
+  if (isCheckedIn(item)) {
+    const estimate = item.estimate;
+    const position = estimate ? ` · 대기 ${estimate.position}번 · 내 앞 ${estimate.ahead}명` : '';
+    let notice = '';
+    if (item.queueStatus === 'disappeared') notice = '<p><b>호출 때 자리에 없어 순서가 뒤로 미뤄졌습니다.</b> 접수처에 도착을 알려 주세요.</p>';
+    else if (estimate?.called) notice = '<p><b>진료실에서 호출했습니다.</b> 진료실 앞으로 와 주세요.</p>';
+    return `${notice}<p><b>체크인 완료${position}</b> · 체크인 후에는 예약을 변경하거나 취소할 수 없습니다.</p>`;
+  }
   if (item.date === today()) return '<p class="muted">병원 도착 후 체크인하면 예상 진료 시각이 표시됩니다.</p>';
   return '';
 }
 
 function appointmentCard(item) {
   const { start } = estimateText(item);
-  return `<section class="card featured"><h2>${escapeHtml(item.hospitalName)}</h2><p>${escapeHtml(item.doctor)} 의사 · ${escapeHtml(item.department)}</p><span class="badge">${isCheckedIn(item) ? '진료 대기' : '예약 확정'}</span><div class="metrics"><div>예약 시각<strong>${item.time}</strong></div><div>예상 진료<strong>${start}</strong></div></div>${item.estimate ? `<p><b>예약보다 ${item.estimate.delay}분 지연 예상</b></p>` : ''}${queueNote(item)}<p class="muted">예상 시각은 진료 상황에 따라 달라질 수 있습니다.</p><div class="actions">${button('진료 예정 보기', 'view', item.id, true)}${isCheckedIn(item) ? '' : button('예약 변경 · 취소', 'view', item.id)}</div></section>`;
+  return `<section class="card featured"><h2>${escapeHtml(item.hospitalName)}</h2><p>${escapeHtml(item.doctor)} 의사 · ${escapeHtml(item.department)}</p><span class="badge">${isCheckedIn(item) ? '진료 대기' : '예약 확정'}</span><div class="metrics"><div>예약 시각<strong>${item.time}</strong></div><div>예상 진료<strong>${start}</strong></div></div>${item.estimate?.delay ? `<p><b>예약보다 ${item.estimate.delay}분 지연 예상</b></p>` : ''}${queueNote(item)}<p class="muted">예상 시각은 진료 상황에 따라 달라질 수 있습니다.</p><div class="actions">${button('진료 예정 보기', 'view', item.id, true)}${isCheckedIn(item) ? '' : button('예약 변경 · 취소', 'view', item.id)}</div></section>`;
+}
+
+// 홈의 '최근 알림' (알림 설정의 진료 시각 변경·진료 임박 스위치를 따른다)
+function homeAlert(item) {
+  const estimate = item?.estimate;
+  if (!estimate) return '<p class="muted">새로운 알림이 없습니다.</p>';
+  const row = (title, text) => `<div class="row"><b>${title}</b><span>${text}</span></div>`;
+  if (estimate.called && settings.soon) return row('진료실 호출', '진료실 앞으로 와 주세요.');
+  if (estimate.ahead === 0 && settings.soon) return row('진료 임박', `곧 진료 순서입니다. 예상 진료 시각은 ${estimate.start}입니다.`);
+  if (estimate.delayed && settings.delay) return row('진료 지연 안내', `예약보다 ${estimate.delay}분 늦은 ${estimate.start}에 진료할 예정입니다.`);
+  return row('진료 예정 시각 안내', `예상 진료 시각은 ${estimate.start}입니다.`);
 }
 
 // ---------- 화면 ----------
 function home() {
-  const dateLine = `<p class="muted">${new Date().toLocaleDateString('ko-KR', { dateStyle: 'full', timeZone: 'Asia/Seoul' })}</p><h1>오늘의 예약</h1>`;
+  const greeting = patient ? `${escapeHtml(patient.displayName)}님 · ` : '';
+  const dateLine = `<p class="muted">${greeting}${new Date().toLocaleDateString('ko-KR', { dateStyle: 'full', timeZone: 'Asia/Seoul' })}</p><h1>오늘의 예약</h1>`;
   if (load.status === 'loading') return dateLine + loadingCard();
   if (load.status === 'error') return dateLine + errorCard(load.error);
   const item = upcoming().find(value => value.date === today());
   const next = upcoming().find(value => value.date > today());
-  const alert = item?.estimate
-    ? `<div class="row"><b>진료 예정 시각 안내</b><span>예상 진료 시각은 ${item.estimate.start}입니다.</span></div>`
-    : '<p class="muted">새로운 알림이 없습니다.</p>';
+  const alert = homeAlert(item);
   const nextRow = next
     ? `<div class="row"><b>${formatDate(next.date)} ${next.time}</b><span>${escapeHtml(next.hospitalName)} · ${escapeHtml(next.doctor)}</span>${button('상세 보기', 'view', next.id)}</div>`
     : '<p class="muted">예정된 예약이 없습니다.</p>';
@@ -150,10 +194,14 @@ function timeChoices() {
 }
 
 function search() {
-  const results = hospitals.filter(item => `${item.name} ${item.area}`.replaceAll(' ', '').includes(query.replaceAll(' ', '')));
+  const title = '<h1>병원 검색 · 예약</h1><p class="muted">병원·진료과 사전 예약</p>';
+  if (load.status === 'loading') return title + loadingCard('병원과 의사 정보를 불러오는 중입니다…');
+  if (load.status === 'error') return title + errorCard(load.error);
   const hospital = hospitalOf(draft.hospitalId);
+  if (!hospital) return title + '<section class="card empty"><p>예약할 수 있는 의사가 없습니다.</p></section>';
+  const results = searchHospitals(hospitals, query);
   const dates = Array.from({ length: 5 }, (_, index) => shiftDate(today(), index));
-  return `<h1>병원 검색 · 예약</h1><p class="muted">정신건강의학과 사전 예약</p><div class="columns"><section class="card"><h2>병원 검색</h2><form id="search-form" class="search-form"><input id="query" aria-label="병원명 또는 지역" placeholder="병원명 또는 지역을 입력하세요."><button class="primary">검색</button></form><p>검색 결과 ${results.length}개</p><div class="results">${results.map(item => `<button class="hospital ${item.id === draft.hospitalId ? 'selected' : ''}" data-action="hospital" data-id="${item.id}" aria-pressed="${item.id === draft.hospitalId}"><b>${item.name}</b><span>${item.area}</span><i aria-hidden="true">›</i></button>`).join('') || '<p class="empty">검색 결과가 없습니다. 다른 병원명이나 지역을 입력해 주세요.</p>'}</div></section><section class="card"><h2>${hospital.name} ${editingId ? '예약 변경' : '예약'}</h2><p class="muted">${hospital.area}</p><label class="field">담당의 선택<select id="doctor">${hospital.doctors.map(doctor => `<option value="${doctor.id}" ${doctor.id === draft.doctorId ? 'selected' : ''}>${doctor.name}</option>`).join('')}</select></label><label class="field">날짜 선택<input type="date" id="date" min="${today()}" value="${draft.date}"></label><div class="choices">${dates.map(date => `<button data-action="date" data-id="${date}" class="${draft.date === date ? 'primary' : ''}" aria-pressed="${draft.date === date}">${formatDate(date)}</button>`).join('')}</div><h3>시간 선택</h3>${timeChoices()}<h3>선택한 예약 정보</h3>${details({ ...draft, hospitalName: hospital.name })}${button('예약 내용 확인', 'review', '', true, slots.status !== 'ready')}${editingId ? button('변경 그만하기', 'stop-edit') : ''}</section></div>`;
+  return `${title}<div class="columns"><section class="card"><h2>병원 검색</h2><form id="search-form" class="search-form"><input id="query" aria-label="병원명, 지역, 진료과 또는 의사 이름" placeholder="병원명, 지역, 진료과 또는 의사 이름"><button class="primary">검색</button></form><p>검색 결과 ${results.length}개</p><div class="results">${results.map(item => `<button class="hospital ${item.id === draft.hospitalId ? 'selected' : ''}" data-action="hospital" data-id="${escapeHtml(item.id)}" aria-pressed="${item.id === draft.hospitalId}"><b>${escapeHtml(item.name)}</b><span>${escapeHtml(item.area)} · 의사 ${item.doctors.length}명</span><i aria-hidden="true">›</i></button>`).join('') || '<p class="empty">검색 결과가 없습니다. 다른 병원명, 지역, 진료과를 입력해 주세요.</p>'}</div></section><section class="card"><h2>${escapeHtml(hospital.name)} ${editingId ? '예약 변경' : '예약'}</h2><p class="muted">${escapeHtml(hospital.area)}</p><label class="field">담당의 선택<select id="doctor">${hospital.doctors.map(doctor => `<option value="${escapeHtml(doctor.id)}" ${doctor.id === draft.doctorId ? 'selected' : ''}>${escapeHtml(doctor.name)} (${escapeHtml(doctor.department)})</option>`).join('')}</select></label><label class="field">날짜 선택<input type="date" id="date" min="${today()}" value="${draft.date}"></label><div class="choices">${dates.map(date => `<button data-action="date" data-id="${date}" class="${draft.date === date ? 'primary' : ''}" aria-pressed="${draft.date === date}">${formatDate(date)}</button>`).join('')}</div><h3>시간 선택</h3>${timeChoices()}<h3>선택한 예약 정보</h3>${details({ ...draft, hospitalName: hospital.name })}${button('예약 내용 확인', 'review', '', true, slots.status !== 'ready')}${editingId ? button('변경 그만하기', 'stop-edit') : ''}</section></div>`;
 }
 
 function statusBadge(item) {
@@ -223,13 +271,13 @@ function goAppointments(item) {
 
 // ---------- 예약·변경·취소 ----------
 async function confirmBooking() {
-  const error = validate(draft, { doctorBooked: slots.items, mine: appointments }, editingId);
+  const error = validate(draft, { doctorBooked: slots.items, mine: appointments, hospitals }, editingId);
   if (error) { showDialog(reviewDialog(error)); return; }
   busy = true;
   showDialog(reviewDialog());
   const wasEditing = editingId;
   try {
-    const saved = fromApi(wasEditing ? await api.update(wasEditing, draft) : await api.create(draft));
+    const saved = fromApi(wasEditing ? await api.update(wasEditing, draft) : await api.create(draft), hospitals);
     busy = false;
     editingId = null;
     draft.time = '';
@@ -286,6 +334,7 @@ document.addEventListener('click', event => {
   switch (action) {
     case 'hospital': {
       const hospital = hospitalOf(id);
+      if (!hospital) return;
       draft.hospitalId = id;
       draft.doctorId = hospital.doctors[0].id;
       draft.time = '';
@@ -298,13 +347,14 @@ document.addEventListener('click', event => {
     case 'retry-slots': loadSlots(true); return;
     case 'view': if (item) goAppointments(item); return;
     case 'edit':
+      if (!item?.hospitalId) return;
       editingId = id;
       draft = { hospitalId: item.hospitalId, doctorId: item.doctorId, date: item.date < today() ? today() : item.date, time: item.time };
       if (location.hash === '#search') render(true); else location.hash = 'search';
       return;
-    case 'stop-edit': editingId = null; draft.time = ''; break;
+    case 'stop-edit': editingId = null; draft.time = ''; syncDraft(); break;
     case 'review': {
-      const error = validate(draft, { doctorBooked: slots.items, mine: appointments }, editingId);
+      const error = validate(draft, { doctorBooked: slots.items, mine: appointments, hospitals }, editingId);
       if (error) { notify(error); return; }
       showDialog(reviewDialog());
       return;

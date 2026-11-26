@@ -430,7 +430,7 @@ curl -i -X PUT http://localhost:3000/api/algorithm-config/1 \
 
 `GET /api/appointments/:id/wait`
 
-환자 화면에서 쓰는 API입니다. 의사 전체 대기열(3.8)과 달리 **해당 예약의 대기 정보만** 반환하며, 다른 환자의 ID·순번·예상 시간은 포함하지 않습니다. 조회 전에 노쇼 처리가 실행됩니다.
+환자용 화면(`frontend/`)이 체크인한 오늘 예약의 대기 정보를 표시할 때 쓰는 API입니다. 의사 전체 대기열(3.8)과 달리 **해당 예약의 대기 정보만** 반환하며, 다른 환자의 ID·순번·예상 시간은 포함하지 않습니다. 조회 전에 노쇼 처리가 실행됩니다.
 
 ```sh
 curl -i http://localhost:3000/api/appointments/1/wait

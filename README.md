@@ -12,6 +12,7 @@
 - 예약·체크인·호출·부재·복귀 대기열 관리
 - 의사별 알고리즘 설정(초진·재진 기본시간, 준비시간, EWMA 비율, 지연 알림 기준)
 - SSE로 대기열 변경 실시간 전송
+- 환자용 화면: 의사 목록 기반 병원 검색·예약·변경·취소, 본인 대기 순번·예상 진료 시각·호출 안내 (30초마다 자동 갱신)
 
 ## 기술 스택
 
@@ -29,7 +30,7 @@ src/            API 서버 (routes, services, utils, errors)
 prisma/         스키마와 migration
 tests/          백엔드 단위·통합 테스트 (Vitest)
 frontend/       환자용 화면 (frontend/README.md 참고)
-frontend/hospital/  병원용 화면: 대기열 대시보드, 예약 관리 (frontend/hospital/README.md 참고)
+frontend/hospital/  병원용 화면: 대기열 대시보드, 예약 관리, 예측 알고리즘 설정 (frontend/hospital/README.md 참고)
 docs/           API 명세(api.md), 테이블 정의(entities.md)
 dump.sql        개발용 샘플 데이터 (데이터 전용)
 ~~~
@@ -64,7 +65,7 @@ npm run dev:patient   # 환자용 화면 http://localhost:5173
 curl http://localhost:3000/health   # DB 연결 확인
 ~~~
 
-병원용 화면은 API 서버를 켠 뒤 `frontend/hospital/dashboard.html`(대기열 대시보드)이나 `frontend/hospital/appointments.html`(예약 관리)을 브라우저로 연다.
+병원용 화면은 API 서버를 켠 뒤 `frontend/hospital/dashboard.html`(대기열 대시보드), `frontend/hospital/appointments.html`(예약 관리), `frontend/hospital/settings.html`(예측 알고리즘 설정)을 브라우저로 연다.
 
 빌드 후 실행은 `npm run build && npm start`. 종료는 `Ctrl+C`, DB 컨테이너는 `docker compose stop db`.
 
