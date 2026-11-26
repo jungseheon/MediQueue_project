@@ -95,7 +95,7 @@ docker exec -i mediqueue-db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB' < dum
 
 ## API
 
-요청·응답과 동작의 기준 문서는 [API 명세](docs/api.md)다. 의사·환자 등록/수정 API는 제공하지 않는다.
+요청·응답과 동작의 기준 문서는 [API 명세](docs/api.md)다.
 
 | Method | Path | 설명 |
 | --- | --- | --- |
@@ -106,6 +106,7 @@ docker exec -i mediqueue-db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB' < dum
 | PATCH | `/api/appointments/:id` | 예약 일시·의사·환자·상태 수정 |
 | DELETE | `/api/appointments/:id` | 예약 취소 (`cancelled`로 변경) |
 | POST | `/api/appointments/:id/check-in` | 체크인, 대기 순번 발급 |
+| GET | `/api/appointments/:id/wait` | 환자 본인의 대기 순번·예상 대기시간 (다른 환자 정보 제외) |
 | GET | `/api/doctors/:doctorId/queue` | 의사별 대기열과 예상 시작·대기·지연 시간 |
 | GET | `/api/doctors/:doctorId/stream` | 의사별 대기열 변경 실시간 구독 (SSE) |
 | PATCH | `/api/queue-entries/:id/status` | 대기 상태 변경, 진료 완료 시 EWMA 갱신 |
@@ -114,6 +115,10 @@ docker exec -i mediqueue-db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB' < dum
 | POST | `/api/queue-entries/:id/return` | 부재 환자 대기열 복귀 |
 | GET | `/api/algorithm-config/:doctorId` | 의사별 알고리즘 설정 조회 |
 | PUT | `/api/algorithm-config/:doctorId` | 의사별 알고리즘 설정 저장 |
+| GET·POST | `/api/doctors` | 의사 목록 조회 (`department` 필터)·등록 |
+| GET·PATCH·DELETE | `/api/doctors/:id` | 의사 상세 조회·수정·삭제 (예약이 있으면 삭제 불가) |
+| GET·POST | `/api/patients` | 환자 목록 조회 (`name` 검색)·등록 |
+| GET·PATCH·DELETE | `/api/patients/:id` | 환자 상세 조회·수정·삭제 (예약이 있으면 삭제 불가) |
 
 ## GitHub 협업 규칙
 
