@@ -3,6 +3,7 @@ import type { Doctor, Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { ApiError } from "../errors/apiError";
 import { parseBody, parseId, parseText } from "../utils/parsers";
+import { getAlgorithmSettings } from "../services/queueEstimator";
 
 const router = Router();
 
@@ -27,6 +28,37 @@ router.get("/:id", async (req, res) => {
   const doctor = await prisma.doctor.findUnique({ where: { id } });
   if (!doctor) throw new ApiError(404, "Doctor not found");
   res.json({ data: serializeDoctor(doctor) });
+});
+
+// GET /api/doctors/:id/service-time-stats
+// 초진·재진 EWMA(현재 예상 진료시간)를 조회한다. 아직 완료된 진료가 없어 통계가 없으면
+// 대기열 계산과 같은 기준인 알고리즘 설정의 기본시간을 돌려주고 isDefault를 true로 표시한다.
+router.get("/:id/service-time-stats", async (req, res) => {
+  const id = parseId(req.params.id, "id");
+  const doctor = await prisma.doctor.findUnique({ where: { id } });
+  if (!doctor) throw new ApiError(404, "Doctor not found");
+
+  const [settings, stats] = await Promise.all([
+    getAlgorithmSettings(id),
+    prisma.serviceTimeStat.findMany({
+      where: { doctorId: id, serviceType: { in: ["FIRST_VISIT", "FOLLOW_UP"] } },
+    }),
+  ]);
+
+  const toResult = (serviceType: "FIRST_VISIT" | "FOLLOW_UP", defaultMinutes: number) => {
+    const stat = stats.find((item) => item.serviceType === serviceType);
+    return stat
+      ? { ewmaMinutes: Number(stat.ewmaMinutes), sampleCount: stat.sampleCount, updatedAt: stat.updatedAt, isDefault: false }
+      : { ewmaMinutes: defaultMinutes, sampleCount: 0, updatedAt: null, isDefault: true };
+  };
+
+  res.json({
+    data: {
+      doctorId: id.toString(),
+      firstVisit: toResult("FIRST_VISIT", settings.firstVisitTime),
+      followUp: toResult("FOLLOW_UP", settings.reVisitTime),
+    },
+  });
 });
 
 // POST /api/doctors
