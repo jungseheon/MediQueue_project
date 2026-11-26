@@ -33,6 +33,7 @@ frontend/       환자용 화면 (frontend/README.md 참고)
 frontend/hospital/  병원용 화면: 대기열 대시보드, 예약 관리, 예측 알고리즘 설정 (frontend/hospital/README.md 참고)
 docs/           API 명세(api.md), 테이블 정의(entities.md)
 dump.sql        개발용 샘플 데이터 (데이터 전용)
+scripts/        시연용 오늘 데이터 생성 스크립트 (npm run db:demo)
 ~~~
 
 ## 실행 방법
@@ -56,6 +57,17 @@ docker exec -i mediqueue-db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB' < dum
 ~~~
 
 `dump.sql`은 스키마 없이 데이터만 담고 있으므로 migration을 적용한 빈 DB에 한 번만 복원한다.
+
+`dump.sql`의 예약은 10월 데이터라 오늘 대기열이 비어 있다. 시연 전에는 아래 명령으로 오늘(한국 시간) 기준 데이터를 만든다.
+
+~~~sh
+npm run db:demo
+~~~
+
+- 13번 의사(환자용 화면의 온유 정신건강의학과): 진료 완료 3명(초진 EWMA 반영), 진료 중 1명, 대기 3명, 아직 오지 않은 오늘 예약 2명
+- 4번 환자(환자용 화면의 양윤서): 위 대기열의 2번째 대기자, 내일 14:00 23번 의사 예약
+- 기존 데이터는 지우지 않으며, 13번 의사에게 오늘 예약이 이미 있으면 아무것도 만들지 않는다. 다시 만들려면 아래 "스키마 변경"의 DB 재생성 절차로 DB를 비운 뒤 `dump.sql`부터 다시 복원한다.
+- 예약 시각이 어제로 넘어가지 않도록 한국 시간 새벽 2시 전에는 실행되지 않는다.
 
 ### 3. 서버 실행
 
@@ -118,6 +130,7 @@ docker exec -i mediqueue-db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB' < dum
 | PUT | `/api/algorithm-config/:doctorId` | 의사별 알고리즘 설정 저장 |
 | GET·POST | `/api/doctors` | 의사 목록 조회 (`department` 필터)·등록 |
 | GET·PATCH·DELETE | `/api/doctors/:id` | 의사 상세 조회·수정·삭제 (예약이 있으면 삭제 불가) |
+| GET | `/api/doctors/:id/service-time-stats` | 의사별 초진·재진 EWMA(현재 예상 진료시간) |
 | GET·POST | `/api/patients` | 환자 목록 조회 (`name` 검색)·등록 |
 | GET·PATCH·DELETE | `/api/patients/:id` | 환자 상세 조회·수정·삭제 (예약이 있으면 삭제 불가) |
 

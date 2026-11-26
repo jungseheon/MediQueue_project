@@ -36,6 +36,7 @@
 | POST | `/api/doctors` | 의사 등록 |
 | PATCH | `/api/doctors/:id` | 의사 정보 수정 |
 | DELETE | `/api/doctors/:id` | 의사 삭제 (예약이 없을 때만) |
+| GET | `/api/doctors/:id/service-time-stats` | 의사별 초진·재진 EWMA(현재 예상 진료시간) 조회 |
 | GET | `/api/patients` | 환자 목록 조회 (`name` 검색) |
 | GET | `/api/patients/:id` | 환자 상세 조회 |
 | POST | `/api/patients` | 환자 등록 |
@@ -534,6 +535,37 @@ curl -i 'http://localhost:3000/api/patients?name=이'
 - 등록·수정 본문은 `{ "displayName": "이환자" }`이며 `displayName`(1~50자)은 필수입니다. 등록 성공 시 `201 Created`.
 - 삭제: 예약 기록이 있는 환자는 `409 Conflict`입니다. 진료 이력이 초진·재진 판단에 쓰이기 때문입니다.
 - 환자를 찾지 못하면 `404 Not Found`입니다.
+
+### 3.21 의사별 초진·재진 EWMA 조회
+
+`GET /api/doctors/:id/service-time-stats`
+
+진료 완료(3.9) 때 갱신되는 의사별 초진·재진 EWMA, 즉 대기열 계산(3.8)에 실제로 쓰이는 예상 진료시간을 조회합니다. 아직 완료된 진료가 없어 통계가 없으면 알고리즘 설정(3.14)의 `firstVisitTime`·`reVisitTime`(설정이 없으면 12분·8분)을 돌려주고 `isDefault`를 `true`로 표시합니다.
+
+```sh
+curl -i http://localhost:3000/api/doctors/1/service-time-stats
+```
+
+성공 응답 (`200 OK`):
+
+```json
+{
+  "data": {
+    "doctorId": "1",
+    "firstVisit": { "ewmaMinutes": 13.6, "sampleCount": 3, "updatedAt": "2026-11-26T13:20:05.701Z", "isDefault": false },
+    "followUp": { "ewmaMinutes": 8, "sampleCount": 0, "updatedAt": null, "isDefault": true }
+  }
+}
+```
+
+| 필드 | 설명 |
+|---|---|
+| `ewmaMinutes` | 현재 예상 진료시간(분) |
+| `sampleCount` | EWMA에 반영된 진료 완료 건수 |
+| `updatedAt` | 마지막 갱신 시각, 통계가 없으면 `null` |
+| `isDefault` | 통계가 없어 설정 기본시간을 돌려준 경우 `true` |
+
+의사를 찾지 못하면 `404 Not Found`입니다.
 
 ## 4. 자동 예약 노쇼 처리
 
