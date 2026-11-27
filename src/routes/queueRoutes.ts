@@ -14,6 +14,7 @@ import { ApiError } from "../errors/apiError";
 import { parseBody, parseId, parseIntInRange, parseQueueStatus } from "../utils/parsers";
 import { processNoShows } from "../services/noShowProcessor";
 import { sseService } from "../services/sseService";
+import { broadcastDoctorQueue } from "../services/queueBroadcaster";
 
 const router = Router();
 
@@ -177,19 +178,11 @@ router.patch("/queue-entries/:id/status", async (req, res) => {
     return { updatedEntry: updated, newEWMA: ewma };
   });
 
-  // 진료 완료 시 남은 대기자(CHECKED_IN, DISAPPEARED)의 예상 시간 재계산
-  const recalculatedQueue =
-    status === "COMPLETED"
-      ? (await estimateDoctorQueue(doctorId, now)).map(({ estimate }) => estimate)
-      : [];
-  // 지연이 설정의 delayThreshold 이상인 대기자 (계산기에서 isAlertTriggered로 표시됨)
-  const alertTargets = recalculatedQueue.filter((estimate) => estimate.isAlertTriggered);
-
-  sseService.broadcastQueueUpdate(doctorId.toString(), {
-    type: "QUEUE_UPDATED",
+  // 모든 상태 변경에서 남은 대기자(CHECKED_IN, DISAPPEARED)의 예상 시간 재계산
+  // EWMA 갱신이 없으면 기존 EWMA를 그대로 사용, 있을 경우 새 EWMA로 재계산
+  const recalculatedQueue = await broadcastDoctorQueue(doctorId, {
     updatedEWMA: newEWMA,
-    recalculatedQueue,
-    alertTargets,
+    now,
   });
 
   res.json({
@@ -246,6 +239,17 @@ router.post("/queue-entries/:id/call", async (req, res) => {
   const doctorName = updatedEntry.appointment.doctor.displayName;
   const callMessage = `${patientName}님, ${department} (${doctorName} 의사실)로 들어오세요.`;
 
+  // SSE 브로드캐스트: 환자 호출 이벤트 전송
+  sseService.broadcastQueueUpdate(updatedEntry.appointment.doctorId.toString(), {
+    type: "PATIENT_CALLED",
+    queueEntry: {
+      id: updatedEntry.id.toString(),
+      appointmentId: updatedEntry.appointmentId.toString(),
+      queuePosition: updatedEntry.queuePosition,
+      status: updatedEntry.status.toLowerCase(),
+    },
+    callMessage,
+  });
   res.json({
     data: {
       queueEntry: {
@@ -385,8 +389,8 @@ router.post("/queue-entries/:id/disappear", async (req, res) => {
     };
   });
 
-  // 대기 시간 실시간 재계산
-  const recalculatedQueue = (await estimateDoctorQueue(doctorId)).map(({ estimate }) => estimate);
+  // 대기 시간 실시간 재계산 - 자리비움 처리로 인해 순번이 바뀌었으므로 대기열 전체 재계산
+  const recalculatedQueue = await broadcastDoctorQueue(doctorId);
 
   res.json({
     data: {
@@ -422,6 +426,8 @@ router.post("/queue-entries/:id/return", async (req, res) => {
     where: { id: queueEntryId },
     data: { status: "CHECKED_IN", calledAt: null },
   });
+
+  await broadcastDoctorQueue(targetEntry.appointment.doctorId);
 
   res.json({
     data: {

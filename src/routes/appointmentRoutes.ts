@@ -11,6 +11,7 @@ import {
   waitMinutesUntil,
 } from "../services/queueEstimator";
 import { getKstDayRange, isSameKstDay } from "../utils/time";
+import { broadcastDoctorQueue } from "../services/queueBroadcaster";
 
 const router = Router();
 
@@ -362,6 +363,9 @@ router.post("/:id/check-in", async (req, res) => {
       appointment: appointmentData,
     };
   });
+
+  // 체크인 후 남은 대기자의 예상 시간 재계산 및 SSE 브로드캐스트
+  await broadcastDoctorQueue(found.doctorId, { now});
 
   res.status(200).json({ data: result });
 });

@@ -68,11 +68,24 @@ function subscribe() {
   if (state.stream) state.stream.close();
   state.stream = state.doctorId ? Api.subscribeQueue(state.doctorId) : null;
   if (!state.stream) return;
+
+  // SSE 이벤트 수신
   state.stream.onmessage = (e) => {
-    const event = JSON.parse(e.data);
-    if (event.type !== "QUEUE_UPDATED") return;
-    if (event.updatedEWMA != null) state.lastEwma = event.updatedEWMA;
-    load();
+    let event;
+    try{
+      event = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    if (event.type === "QUEUE_UPDATED") {
+      if (event.updatedEWMA != null) state.lastEwma = event.updatedEWMA;
+      load();
+      return;
+    }
+
+    if (event.type === "PATIENT_CALLED") {
+      load();
+    }
   };
 }
 
@@ -340,6 +353,11 @@ $("doctorSelect").onchange = (e) => {
 
 window.addEventListener("resize", renderList);
 setInterval(updateElapsed, 1000);
-// 호출·부재·복귀·체크인은 아직 SSE 이벤트가 없으므로 30초마다 함께 갱신한다
+//SSE 연결 끊김이나 이벤트 누락에 대비해 주기적으로 동기화
 setInterval(load, 30000);
 load().then(subscribe);
+
+// SSE 연결이 일시적으로 끊겼을 때를 대비한 백업 동기화
+window.addEventListener("beforeunload", () => {
+  if (state.stream) state.stream.close();
+});
