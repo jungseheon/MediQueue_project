@@ -42,37 +42,75 @@ function queueRows() {
   });
 }
 
-// 데이터 불러오기
+let isLoading = false;
+let pendingReload = false;
+
+// 데이터 불러오기 (중복 호출 시 진행 중인 요청 완료 후 1회만 추가 동기화)
 async function load() {
+  if (isLoading) {
+    pendingReload = true;
+    return;
+  }
+
+  isLoading = true;
+  let requestedDoctorId = state.doctorId;
   try {
     state.appointments = await Api.getAppointments();
     fillDoctorSelect();
     if (state.doctorId) {
+      requestedDoctorId = state.doctorId;
       const [data, config] = await Promise.all([
-        Api.getQueue(state.doctorId),
+        Api.getQueue(requestedDoctorId),
         // 설정을 못 불러와도 대시보드는 기본값으로 계속 보여준다
-        Api.getConfig(state.doctorId).catch(() => DEFAULT_ALGORITHM_CONFIG),
+        Api.getConfig(requestedDoctorId).catch(() => DEFAULT_ALGORITHM_CONFIG),
       ]);
+
+      // 응답 대기 중 다른 진료실로 바뀐 경우 오래된 응답은 화면에 반영하지 않는다
+      if (requestedDoctorId !== state.doctorId) {
+        return;
+      }
+
       state.queue = data.queue;
       state.generatedAt = data.generatedAt;
       state.config = { ...DEFAULT_ALGORITHM_CONFIG, ...config };
     }
     render();
   } catch (e) {
-    alert("데이터를 불러오지 못했습니다: " + e.message);
+    if (requestedDoctorId === state.doctorId) {
+      alert("데이터를 불러오지 못했습니다: " + e.message);
+    }
+  } finally {
+    isLoading = false;
+    if (pendingReload) {
+      pendingReload = false;
+      load();
+    }
   }
 }
 
-// 선택한 의사의 대기열이 다른 화면에서 바뀌면(진료 시작·완료) 바로 다시 불러온다
+// 선택한 의사의 대기열이 바뀌거나(체크인·진료 시작/완료·부재·복귀) 환자가 호출·재연결되면 바로 다시 불러온다
 function subscribe() {
   if (state.stream) state.stream.close();
   state.stream = state.doctorId ? Api.subscribeQueue(state.doctorId) : null;
   if (!state.stream) return;
+
   state.stream.onmessage = (e) => {
-    const event = JSON.parse(e.data);
-    if (event.type !== "QUEUE_UPDATED") return;
-    if (event.updatedEWMA != null) state.lastEwma = event.updatedEWMA;
-    load();
+    let event;
+    try {
+      event = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+
+    if (event.type === "CONNECTED" || event.type === "PATIENT_CALLED") {
+      load();
+      return;
+    }
+
+    if (event.type === "QUEUE_UPDATED") {
+      if (event.updatedEWMA != null) state.lastEwma = event.updatedEWMA;
+      load();
+    }
   };
 }
 
@@ -340,6 +378,11 @@ $("doctorSelect").onchange = (e) => {
 
 window.addEventListener("resize", renderList);
 setInterval(updateElapsed, 1000);
-// 호출·부재·복귀·체크인은 아직 SSE 이벤트가 없으므로 30초마다 함께 갱신한다
+//SSE 연결 끊김이나 이벤트 누락에 대비해 주기적으로 동기화
 setInterval(load, 30000);
 load().then(subscribe);
+
+// SSE 연결이 일시적으로 끊겼을 때를 대비한 백업 동기화
+window.addEventListener("beforeunload", () => {
+  if (state.stream) state.stream.close();
+});

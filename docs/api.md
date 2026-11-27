@@ -215,8 +215,8 @@ curl -i -X POST http://localhost:3000/api/appointments/1/check-in
   }
 }
 ```
+체크인 요청 전에 노쇼 처리가 실행됩니다. 체크인은 예약 시각 5분 후까지 가능하며, 그 이후에는 해당 예약이 `no_show`로 표시되어 체크인이 거부됩니다. **예약일이 오늘(한국 시간 기준)인 예약만** 체크인할 수 있으며, 다른 날 예약은 `409 Conflict`입니다. 당일 순번은 한국 시간 0시 기준으로 매일 1번부터 다시 시작하며, 같은 의사에게 동시에 체크인해도 순번이 겹치지 않습니다. 체크인에 성공하면 해당 의사의 SSE 구독자에게 `QUEUE_UPDATED` 이벤트를 보냅니다(3.13). 예약이 취소되었거나 이미 체크인·진료 처리되었거나 대기 항목이 취소/노쇼된 경우 `409 Conflict`, 예약을 찾지 못하면 `404 Not Found`입니다.
 
-체크인 요청 전에 노쇼 처리가 실행됩니다. 체크인은 예약 시각 5분 후까지 가능하며, 그 이후에는 해당 예약이 `no_show`로 표시되어 체크인이 거부됩니다. **예약일이 오늘(한국 시간 기준)인 예약만** 체크인할 수 있으며, 다른 날 예약은 `409 Conflict`입니다. 당일 순번은 한국 시간 0시 기준으로 매일 1번부터 다시 시작하며, 같은 의사에게 동시에 체크인해도 순번이 겹치지 않습니다. 예약이 취소되었거나 이미 체크인·진료 처리되었거나 대기 항목이 취소/노쇼된 경우 `409 Conflict`, 예약을 찾지 못하면 `404 Not Found`입니다.
 
 ### 3.8 의사별 대기열과 예상 대기시간 조회
 
@@ -288,7 +288,7 @@ curl -i -X PATCH http://localhost:3000/api/queue-entries/1/status \
   --data '{"status":"completed"}'
 ```
 
-성공 응답의 `data`는 `updatedEntry`, `updatedEWMA`, `recalculatedQueue`를 포함합니다. 완료 외 상태에서는 `updatedEWMA`가 `null`, `recalculatedQueue`가 빈 배열입니다. 상태를 바꾸면 해당 의사의 SSE 구독자에게 `QUEUE_UPDATED` 이벤트를 보냅니다(3.13). 알 수 없는 대기 항목은 `404`, 허용되지 않은 상태는 `400`입니다.
+성공 응답의 `data`는 `updatedEntry`, `updatedEWMA`, `recalculatedQueue`를 포함합니다. 상태를 바꿀 때마다 남은 활성 대기자의 예상 시간을 재계산하여 `recalculatedQueue`에 담아 반환하고, 해당 의사의 SSE 구독자에게 `QUEUE_UPDATED` 이벤트를 보냅니다(3.13). `updatedEWMA`는 `completed`로 변경되면서 실제 진료시간이 반영된 경우에만 갱신된 수치를 반환하며, 그 외 상태 변경에서는 `null`입니다. 알 수 없는 대기 항목은 `404`, 상태 값 형식이 잘못되면 `400`, 허용되지 않은 상태 전환이면 `409`입니다.
 
 ### 3.10 환자 호출
 
@@ -315,8 +315,7 @@ curl -i -X POST http://localhost:3000/api/queue-entries/1/call
   }
 }
 ```
-
-허용되지 않은 상태의 항목이면 `409 Conflict`, 대기 항목이 없으면 `404 Not Found`입니다.
+호출에 성공하면 대기열을 재계산하지 않고 해당 의사의 SSE 구독자에게 `PATIENT_CALLED` 이벤트를 보냅니다(3.13). 허용되지 않은 상태의 항목이면 `409 Conflict`, 대기 항목이 없으면 `404 Not Found`입니다.
 
 ### 3.11 호출 후 부재 처리
 
@@ -338,7 +337,7 @@ curl -i -X POST http://localhost:3000/api/queue-entries/1/disappear \
   --data '{"delayPositions":2}'
 ```
 
-호출 기록이 없거나 상태가 허용되지 않으면 `409 Conflict`, 대기 항목을 찾지 못하면 `404 Not Found`입니다.
+부재 처리에 성공하면 남은 대기자의 예상 시간을 재계산하여 응답의 `recalculatedQueue`에 담아 반환하고, 해당 의사의 SSE 구독자에게 `QUEUE_UPDATED` 이벤트를 보냅니다(3.13). 호출 기록이 없거나 상태가 허용되지 않으면 `409 Conflict`, 대기 항목을 찾지 못하면 `404 Not Found`입니다.
 
 ### 3.12 부재 환자 대기열 복귀
 
@@ -350,13 +349,13 @@ curl -i -X POST http://localhost:3000/api/queue-entries/1/disappear \
 curl -i -X POST http://localhost:3000/api/queue-entries/1/return
 ```
 
-성공 응답에는 환자 안내 메시지와 갱신된 대기 항목이 포함됩니다. 대상 상태가 `disappeared`가 아니면 `409 Conflict`, 대기 항목이 없으면 `404 Not Found`입니다.
+성공 응답에는 환자 안내 메시지와 갱신된 대기 항목이 포함되며, 복귀 직후 해당 의사의 SSE 구독자에게 `QUEUE_UPDATED` 이벤트를 보냅니다(3.13). 대상 상태가 `disappeared`가 아니면 `409 Conflict`, 대기 항목이 없으면 `404 Not Found`입니다.
 
 ### 3.13 의사별 대기열 실시간 구독 (SSE)
 
 `GET /api/doctors/:doctorId/stream`
 
-Server-Sent Events(`text/event-stream`) 연결을 열어 두고, 해당 의사의 대기열이 바뀔 때마다 이벤트를 받습니다. 연결 직후 `CONNECTED` 이벤트를 한 번 보냅니다.
+Server-Sent Events(`text/event-stream`) 연결을 열어 두고, 해당 의사의 대기열이 변경되거나 환자가 호출될 때마다 실시간 이벤트를 받습니다. 연결 직후 `CONNECTED` 이벤트를 한 번 보냅니다.
 
 ```sh
 curl -N http://localhost:3000/api/doctors/1/stream
@@ -365,14 +364,25 @@ curl -N http://localhost:3000/api/doctors/1/stream
 ```text
 data: {"type":"CONNECTED","doctorId":"1"}
 
-data: {"type":"QUEUE_UPDATED","updatedEWMA":9.5,"recalculatedQueue":[...],"alertTargets":[...]}
+data: {"type":"QUEUE_UPDATED","updatedEWMA":9.5,"recalculatedQueue":[{"ticketId":2,"estimatedStartTime":"2026-11-10T00:55:00.000Z","delayMinutes":10,"isAlertTriggered":true}],"alertTargets":[{"ticketId":2,"estimatedStartTime":"2026-11-10T00:55:00.000Z","delayMinutes":10,"isAlertTriggered":true}]}
+
+data: {"type":"PATIENT_CALLED","queueEntry":{"id":"2","appointmentId":"2","queuePosition":1,"status":"checked_in"},"callMessage":"이환자님, 내과 (김의사 의사실)로 들어오세요."}
 ```
 
-- `QUEUE_UPDATED`: 대기열 상태 변경 API(3.9)가 성공하면 보냅니다. 호출·부재·복귀·체크인에서는 아직 보내지 않습니다.
-- `recalculatedQueue`: 진료 완료 시 남은 대기자의 예상 결과(`ticketId`, `estimatedStartTime`, `delayMinutes`, `isAlertTriggered`). 완료 외 상태에서는 빈 배열입니다.
-- `alertTargets`: `recalculatedQueue` 중 지연이 설정의 `delayThreshold`(없으면 10분) 이상인 항목입니다.
+| 이벤트 `type` | 발생 시점 | 설명 |
+|---|---|---|
+| `CONNECTED` | 스트림 연결 직후 (1회) | 해당 `doctorId` 채널 구독이 시작되었음을 알립니다. |
+| `QUEUE_UPDATED` | 체크인(3.7), 상태 변경(3.9), 부재 처리(3.11), 복귀 처리(3.12) 성공 시 | 대기열 구성·순번·예상 시간이 바뀔 때 재계산 결과와 지연 알림 대상을 전송합니다. |
+| `PATIENT_CALLED` | 환자 호출(3.10) 성공 시 | 순번이나 예상 시간 변동이 없으므로 대기열을 재계산하지 않고 호출 정보만 전송합니다. |
 
-브라우저에서는 `new EventSource("http://localhost:3000/api/doctors/1/stream")`로 구독합니다.
+- `CONNECTED`: 연결된 의사 ID 문자열(`doctorId`)을 포함합니다.
+- `QUEUE_UPDATED`: 대기열 변경 시 전송되며 아래 필드를 포함합니다.
+  - `updatedEWMA`: 진료 완료(`completed`)로 실제 진료시간이 반영된 경우에만 갱신된 EWMA(분)를 담으며, 체크인·진료 시작·취소·노쇼·부재·복귀 등 그 외 이벤트에서는 `null`입니다.
+  - `recalculatedQueue`: 남은 활성 대기자(`checked_in`, `disappeared`)의 예상 시간 재계산 결과 배열입니다. 완료뿐 아니라 모든 상태 변경(3.9) 및 체크인·부재·복귀 시 최신 계산 결과를 포함하며, 각 항목은 `ticketId`(대기 항목 ID 숫자), `estimatedStartTime`(예상 시작 시각), `delayMinutes`(예약 대비 지연 분), `isAlertTriggered`(지연 알림 기준 도달 여부)를 가집니다.
+  - `alertTargets`: `recalculatedQueue` 중 지연 시간이 의사별 알고리즘 설정(3.14)의 `delayThreshold`(설정이 없으면 10분) 이상(`isAlertTriggered: true`)인 항목만 추린 배열입니다.
+- `PATIENT_CALLED`: 환자 호출 시 대기열 재계산 없이 호출된 대기 항목 요약(`queueEntry`: `id`, `appointmentId`, `queuePosition`, `status`)과 안내 메시지(`callMessage`)만 전송합니다.
+
+브라우저에서는 `new EventSource("http://localhost:3000/api/doctors/1/stream")`로 구독하며, 페이지를 벗어나거나 진료실을 바꿀 때는 `close()`로 기존 연결을 종료합니다. 잘못된 `doctorId` 형식은 `400 Bad Request`입니다.
 
 ### 3.14 의사별 알고리즘 설정 조회
 
