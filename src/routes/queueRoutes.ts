@@ -404,7 +404,7 @@ router.post("/queue-entries/:id/disappear", async (req, res) => {
 router.post("/queue-entries/:id/return", async (req, res) => {
   const queueEntryId = parseId(req.params.id, "id");
 
-  const targetEntry = await prisma.queueEntry.findUnique({
+  const found = await prisma.queueEntry.findUnique({
     where: { id: queueEntryId },
     include: {
       appointment: {
@@ -413,25 +413,35 @@ router.post("/queue-entries/:id/return", async (req, res) => {
     },
   });
 
-  if (!targetEntry) throw new ApiError(404, "Queue entry not found");
+  if (!found) throw new ApiError(404, "Queue entry not found");
 
-  if (targetEntry.status !== "DISAPPEARED") {
-    throw new ApiError(
-      409,
-      `Patient status is '${targetEntry.status.toLowerCase()}'. Return can only be processed for 'disappeared' status.`,
-    );
-  }
+  const doctorId = found.appointment.doctorId;
+  const patientName = found.appointment.patient.displayName;
 
-  const updated = await prisma.queueEntry.update({
-    where: { id: queueEntryId },
-    data: { status: "CHECKED_IN", calledAt: null },
+  const updated = await prisma.$transaction(async (tx) => {
+    await lockDoctorQueue(tx, doctorId);
+
+    const targetEntry = await tx.queueEntry.findUnique({ where: { id: queueEntryId } });
+    if (!targetEntry) throw new ApiError(404, "Queue entry not found");
+
+    if (targetEntry.status !== "DISAPPEARED") {
+      throw new ApiError(
+        409,
+        `Patient status is '${targetEntry.status.toLowerCase()}'. Return can only be processed for 'disappeared' status.`,
+      );
+    }
+
+    return tx.queueEntry.update({
+      where: { id: queueEntryId },
+      data: { status: "CHECKED_IN", calledAt: null },
+    });
   });
 
-  await broadcastDoctorQueue(targetEntry.appointment.doctorId);
+  await broadcastDoctorQueue(doctorId);
 
   res.json({
     data: {
-      message: `${targetEntry.appointment.patient.displayName} 환자가 복귀하여 대기 상태(checked_in)로 전환되었습니다. (현재 순번: ${updated.queuePosition}번)`,
+      message: `${patientName} 환자가 복귀하여 대기 상태(checked_in)로 전환되었습니다. (현재 순번: ${updated.queuePosition}번)`,
       updatedEntry: {
         id: updated.id.toString(),
         appointmentId: updated.appointmentId.toString(),
